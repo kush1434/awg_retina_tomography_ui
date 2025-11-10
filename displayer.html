@@ -14,13 +14,11 @@
     },
     {
       id: 'feature',
-      label: 'feature',
-      path: './models/feature.stl',
+      label: 'feature (from Hugging Face)',
+      path: 'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main/feature.stl',
       color: 0x0077ff,
       opacity: 1.0
     },
-    // Example: add more items like this
-    // { id: 'nerve', label: 'nerve.stl (0.5)', path: './models/nerve.stl', color: 0xff33aa, opacity: 0.5 },
   ];
   // ----------------------------------------------------
 
@@ -38,16 +36,14 @@
   sidebar.style.top = '0';
   sidebar.style.bottom = '0';
   sidebar.style.width = sidebarWidth + 'px';
-  sidebar.style.background = '#222222';   // solid dark gray
-  sidebar.style.color = '#f0f0f0';        // make text readable
-  sidebar.style.backdropFilter = 'blur(4px)';
+  sidebar.style.background = '#222';
+  sidebar.style.color = '#f0f0f0';
   sidebar.style.borderRight = '1px solid rgba(0,0,0,0.1)';
   sidebar.style.padding = '14px 12px';
   sidebar.style.boxSizing = 'border-box';
   sidebar.innerHTML = `<div style="font-weight:600; margin-bottom:10px;">Layers</div>`;
   document.body.appendChild(sidebar);
 
-  // Dynamic checkboxes
   const controlsContainer = document.createElement('div');
   controlsContainer.style.display = 'grid';
   controlsContainer.style.gap = '8px';
@@ -74,7 +70,6 @@
     controlsContainer.appendChild(row);
   }
 
-  // Viewport
   const viewport = document.createElement('div');
   viewport.id = 'viewport';
   viewport.style.position = 'fixed';
@@ -102,7 +97,7 @@
 
   const controls = new OrbitControls(camera, renderer.domElement);
 
-  // Soft lighting
+  // Lighting
   const hemi = new THREE.HemisphereLight(0xbec8ff, 0xffffff, 0.8);
   scene.add(hemi);
 
@@ -115,13 +110,8 @@
   scene.add(fill);
 
   const loader = new STLLoader();
-
-  // We'll compute a single translation from the base mesh center
-  // and reuse it for all features so they align perfectly.
   let baseCenterTranslation = null;
-
-  // ---- Feature management ----------------------------------------------------
-  const featureMeshes = new Map(); // id -> Mesh
+  const featureMeshes = new Map();
 
   function loadFeature(f, onDone) {
     loader.load(f.path, geometry => {
@@ -129,12 +119,10 @@
       const center = new THREE.Vector3();
       geometry.boundingBox.getCenter(center);
       geometry.translate(-center.x, -center.y, -center.z);
-      
-      // Save the center translation from first loaded mesh
+
       if (!baseCenterTranslation) {
         baseCenterTranslation = center.clone().multiplyScalar(-1);
       } else {
-        // Apply the base translation to align with first mesh
         geometry.translate(baseCenterTranslation.x, baseCenterTranslation.y, baseCenterTranslation.z);
         geometry.translate(center.x, center.y, center.z);
       }
@@ -159,28 +147,23 @@
     });
   }
 
-  // Hook up checkbox behavior
-  controlsContainer.addEventListener('change', (e) => {
+  // Checkbox handler
+  controlsContainer.addEventListener('change', e => {
     const target = e.target;
     if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
-
     const id = target.dataset.featureId;
     const f = features.find(x => x.id === id);
     if (!f) return;
 
     const existing = featureMeshes.get(id);
     if (target.checked) {
-      if (existing) {
-        existing.visible = true;
-      } else {
-        loadFeature(f);
-      }
+      if (existing) existing.visible = true;
+      else loadFeature(f);
     } else {
       if (existing) existing.visible = false;
     }
   });
 
-  // ---- Camera & loop ---------------------------------------------------------
   camera.position.set(0, 0, 100);
   camera.lookAt(0, 0, 0);
 
