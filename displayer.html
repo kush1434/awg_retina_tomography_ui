@@ -1,0 +1,193 @@
+<script type="module">
+  import * as THREE from 'https://esm.sh/three';
+  import { STLLoader } from 'https://esm.sh/three/examples/jsm/loaders/STLLoader.js';
+  import { OrbitControls } from 'https://esm.sh/three/examples/jsm/controls/OrbitControls.js';
+
+  // ---------- CONFIG: add more features here ----------
+  const features = [
+    {
+      id: 'eye',
+      label: 'eye',
+      path: './models/eye.stl',
+      color: 0x22cc55,
+      opacity: 0.2
+    },
+    {
+      id: 'feature',
+      label: 'feature',
+      path: './models/feature.stl',
+      color: 0x0077ff,
+      opacity: 1.0
+    },
+    // Example: add more items like this
+    // { id: 'nerve', label: 'nerve.stl (0.5)', path: './models/nerve.stl', color: 0xff33aa, opacity: 0.5 },
+  ];
+  // ----------------------------------------------------
+
+  // ---- UI: sidebar + viewport ------------------------------------------------
+  const sidebarWidth = 220;
+
+  document.body.style.margin = '0';
+  document.body.style.background = 'linear-gradient(#7E8DD0, #D2D5EB)';
+  document.body.style.fontFamily = 'system-ui, -apple-system, Segoe UI, Roboto, Arial';
+
+  // Sidebar
+  const sidebar = document.createElement('div');
+  sidebar.style.position = 'fixed';
+  sidebar.style.left = '0';
+  sidebar.style.top = '0';
+  sidebar.style.bottom = '0';
+  sidebar.style.width = sidebarWidth + 'px';
+  sidebar.style.background = '#222222';   // solid dark gray
+  sidebar.style.color = '#f0f0f0';        // make text readable
+  sidebar.style.backdropFilter = 'blur(4px)';
+  sidebar.style.borderRight = '1px solid rgba(0,0,0,0.1)';
+  sidebar.style.padding = '14px 12px';
+  sidebar.style.boxSizing = 'border-box';
+  sidebar.innerHTML = `<div style="font-weight:600; margin-bottom:10px;">Layers</div>`;
+  document.body.appendChild(sidebar);
+
+  // Dynamic checkboxes
+  const controlsContainer = document.createElement('div');
+  controlsContainer.style.display = 'grid';
+  controlsContainer.style.gap = '8px';
+  sidebar.appendChild(controlsContainer);
+
+  for (const f of features) {
+    const row = document.createElement('label');
+    row.style.display = 'flex';
+    row.style.gap = '8px';
+    row.style.alignItems = 'center';
+    row.style.cursor = 'pointer';
+    row.style.userSelect = 'none';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = `toggle-${f.id}`;
+    cb.dataset.featureId = f.id;
+
+    const text = document.createElement('span');
+    text.textContent = f.label;
+
+    row.appendChild(cb);
+    row.appendChild(text);
+    controlsContainer.appendChild(row);
+  }
+
+  // Viewport
+  const viewport = document.createElement('div');
+  viewport.id = 'viewport';
+  viewport.style.position = 'fixed';
+  viewport.style.left = sidebarWidth + 'px';
+  viewport.style.right = '0';
+  viewport.style.top = '0';
+  viewport.style.bottom = '0';
+  document.body.appendChild(viewport);
+
+  // ---- Three.js setup --------------------------------------------------------
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 10000);
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  viewport.appendChild(renderer.domElement);
+
+  function sizeRenderer() {
+    const w = viewport.clientWidth;
+    const h = viewport.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  sizeRenderer();
+  window.addEventListener('resize', sizeRenderer);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+
+  // Soft lighting
+  const hemi = new THREE.HemisphereLight(0xbec8ff, 0xffffff, 0.8);
+  scene.add(hemi);
+
+  const headlight = new THREE.DirectionalLight(0xffffff, 0.8);
+  camera.add(headlight);
+  scene.add(camera);
+
+  const fill = new THREE.DirectionalLight(0xffffff, 0.3);
+  fill.position.set(-1, -0.5, -1);
+  scene.add(fill);
+
+  const loader = new STLLoader();
+
+  // We'll compute a single translation from the base mesh center
+  // and reuse it for all features so they align perfectly.
+  let baseCenterTranslation = null;
+
+  // ---- Feature management ----------------------------------------------------
+  const featureMeshes = new Map(); // id -> Mesh
+
+  function loadFeature(f, onDone) {
+    loader.load(f.path, geometry => {
+      geometry.computeBoundingBox();
+      const center = new THREE.Vector3();
+      geometry.boundingBox.getCenter(center);
+      geometry.translate(-center.x, -center.y, -center.z);
+      
+      // Save the center translation from first loaded mesh
+      if (!baseCenterTranslation) {
+        baseCenterTranslation = center.clone().multiplyScalar(-1);
+      } else {
+        // Apply the base translation to align with first mesh
+        geometry.translate(baseCenterTranslation.x, baseCenterTranslation.y, baseCenterTranslation.z);
+        geometry.translate(center.x, center.y, center.z);
+      }
+
+      const mat = new THREE.MeshLambertMaterial({
+        color: f.color,
+        transparent: true,
+        opacity: f.opacity,
+        side: f.id === 'eye' ? THREE.DoubleSide : THREE.FrontSide,
+        depthWrite: f.id === 'eye' ? false : true,
+        depthTest: true
+      });
+
+      const mesh = new THREE.Mesh(geometry, mat);
+      mesh.renderOrder = f.id === 'eye' ? 0 : 999;
+      featureMeshes.set(f.id, mesh);
+      scene.add(mesh);
+      onDone?.(mesh);
+    }, undefined, e => {
+      console.error(`❌ ${f.id} load error:`, e);
+      onDone?.(null);
+    });
+  }
+
+  // Hook up checkbox behavior
+  controlsContainer.addEventListener('change', (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
+
+    const id = target.dataset.featureId;
+    const f = features.find(x => x.id === id);
+    if (!f) return;
+
+    const existing = featureMeshes.get(id);
+    if (target.checked) {
+      if (existing) {
+        existing.visible = true;
+      } else {
+        loadFeature(f);
+      }
+    } else {
+      if (existing) existing.visible = false;
+    }
+  });
+
+  // ---- Camera & loop ---------------------------------------------------------
+  camera.position.set(0, 0, 100);
+  camera.lookAt(0, 0, 0);
+
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  animate();
+</script>
