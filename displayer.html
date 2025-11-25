@@ -11,31 +11,102 @@
   import { STLLoader } from 'https://esm.sh/three/examples/jsm/loaders/STLLoader.js';
   import { OrbitControls } from 'https://esm.sh/three/examples/jsm/controls/OrbitControls.js';
 
-  // ---------- CONFIG: add more features here ----------
-  const features = [
-    {
-      id: 'eye',
-      label: 'eye',
-      path: 'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main/sample_1_seg_mesh/eye.stl',
-      color: 0x22cc55,
-      opacity: 0.2
-    },
-    {
-      id: 'feature',
-      label: 'feature',
-      path: 'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main/sample_1_seg_mesh/feature.stl',
-      color: 0x0077ff,
-      opacity: 1.0
-    },
-  ];
+  // ---------- CONFIG: hierarchical structure ----------
+  const samplesData = {
+    samples: [
+      {
+        id: 'sample_1',
+        label: 'Sample 1',
+        structures: [
+          {
+            id: 'eye',
+            label: 'Primary Structure',
+            path: 'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main/sample_1_seg_mesh/eye.stl',
+            color: 0x22cc55,
+            opacity: 0.2
+          },
+          {
+            id: 'feature',
+            label: 'Example Feature',
+            path: 'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main/sample_1_seg_mesh/feature.stl',
+            color: 0x0077ff,
+            opacity: 1.0
+          }
+        ]
+      }
+    ]
+  };
   // ----------------------------------------------------
 
   // ---- UI: sidebar + viewport ------------------------------------------------
-  const sidebarWidth = 220;
+  const sidebarWidth = 320;
 
   document.body.style.margin = '0';
-  document.body.style.background = 'linear-gradient(#7E8DD0, #D2D5EB)';
+  document.body.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
   document.body.style.fontFamily = 'system-ui, -apple-system, Segoe UI, Roboto, Arial';
+
+  // Add custom styles
+  const style = document.createElement('style');
+  style.textContent = `
+    .dropdown-arrow {
+      transition: transform 0.3s ease;
+      display: inline-block;
+    }
+    .dropdown-arrow.open {
+      transform: rotate(90deg);
+    }
+    .checkbox-custom {
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.05);
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s ease;
+      flex-shrink: 0;
+    }
+    .checkbox-custom:hover {
+      border-color: rgba(255, 255, 255, 0.5);
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .checkbox-custom:checked {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-color: #667eea;
+    }
+    .checkbox-custom:checked::after {
+      content: '';
+      position: absolute;
+      left: 5px;
+      top: 2px;
+      width: 4px;
+      height: 8px;
+      border: solid white;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+    .color-picker-input {
+      opacity: 0;
+      position: absolute;
+      width: 0;
+      height: 0;
+      pointer-events: none;
+    }
+    .color-indicator {
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      flex-shrink: 0;
+    }
+    .color-indicator:hover {
+      transform: scale(1.2);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+    }
+    .color-indicator:active {
+      transform: scale(1.1);
+    }
+  `;
+  document.head.appendChild(style);
 
   // Sidebar
   const sidebar = document.createElement('div');
@@ -44,65 +115,243 @@
   sidebar.style.top = '0';
   sidebar.style.bottom = '0';
   sidebar.style.width = sidebarWidth + 'px';
-  sidebar.style.background = '#222';
+  sidebar.style.background = 'rgba(20, 20, 30, 0.95)';
+  sidebar.style.backdropFilter = 'blur(10px)';
   sidebar.style.color = '#f0f0f0';
-  sidebar.style.borderRight = '1px solid rgba(0,0,0,0.1)';
-  sidebar.style.padding = '14px 12px';
+  sidebar.style.borderRight = '1px solid rgba(255, 255, 255, 0.1)';
+  sidebar.style.padding = '0';
   sidebar.style.boxSizing = 'border-box';
-  sidebar.innerHTML = `<div style="font-weight:600; margin-bottom:10px;">Layers</div>`;
+  sidebar.style.boxShadow = '2px 0 20px rgba(0, 0, 0, 0.3)';
+  sidebar.style.overflowY = 'auto';
   document.body.appendChild(sidebar);
 
+  // Header
+  const header = document.createElement('div');
+  header.style.padding = '24px 20px';
+  header.style.borderBottom = '1px solid rgba(255, 255, 255, 0.1)';
+  header.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%)';
+  header.innerHTML = `
+    <div style="font-size: 20px; font-weight: 700; letter-spacing: 0.5px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+      3D Viewer
+    </div>
+    <div style="font-size: 12px; color: rgba(255, 255, 255, 0.5); margin-top: 4px; font-weight: 500;">
+      Layer Controls
+    </div>
+  `;
+  sidebar.appendChild(header);
+
   const controlsContainer = document.createElement('div');
-  controlsContainer.style.display = 'grid';
-  controlsContainer.style.gap = '8px';
+  controlsContainer.style.padding = '16px 0';
   sidebar.appendChild(controlsContainer);
 
-  for (const f of features) {
-    const wrapper = document.createElement('div');
-    wrapper.style.display = 'flex';
-    wrapper.style.flexDirection = 'column';
-    wrapper.style.gap = '4px';
+  // Build hierarchical menu
+  for (const sample of samplesData.samples) {
+    // Sample level
+    const sampleWrapper = document.createElement('div');
+    sampleWrapper.style.marginBottom = '8px';
 
-    const row = document.createElement('label');
-    row.style.display = 'flex';
-    row.style.gap = '8px';
-    row.style.alignItems = 'center';
-    row.style.cursor = 'pointer';
-    row.style.userSelect = 'none';
+    const sampleHeader = document.createElement('div');
+    sampleHeader.style.display = 'flex';
+    sampleHeader.style.alignItems = 'center';
+    sampleHeader.style.padding = '12px 20px';
+    sampleHeader.style.cursor = 'pointer';
+    sampleHeader.style.userSelect = 'none';
+    sampleHeader.style.transition = 'background 0.2s ease';
+    sampleHeader.style.fontWeight = '600';
+    sampleHeader.style.fontSize = '14px';
+    sampleHeader.style.color = 'rgba(255, 255, 255, 0.9)';
 
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.id = `toggle-${f.id}`;
-    cb.dataset.featureId = f.id;
+    sampleHeader.onmouseenter = () => {
+      sampleHeader.style.background = 'rgba(255, 255, 255, 0.05)';
+    };
+    sampleHeader.onmouseleave = () => {
+      sampleHeader.style.background = 'transparent';
+    };
 
-    const text = document.createElement('span');
-    text.textContent = f.label;
+    const arrow = document.createElement('span');
+    arrow.className = 'dropdown-arrow open';
+    arrow.textContent = '▶';
+    arrow.style.marginRight = '12px';
+    arrow.style.fontSize = '10px';
+    arrow.style.color = 'rgba(255, 255, 255, 0.5)';
 
-    row.appendChild(cb);
-    row.appendChild(text);
+    const sampleLabel = document.createElement('span');
+    sampleLabel.textContent = sample.label;
 
-    // Loading bar container
-    const progressContainer = document.createElement('div');
-    progressContainer.id = `progress-${f.id}`;
-    progressContainer.style.display = 'none';
-    progressContainer.style.width = 'calc(100% - 28px)';
-    progressContainer.style.height = '3px';
-    progressContainer.style.background = 'rgba(255,255,255,0.1)';
-    progressContainer.style.borderRadius = '2px';
-    progressContainer.style.overflow = 'hidden';
-    progressContainer.style.marginLeft = '28px';
+    sampleHeader.appendChild(arrow);
+    sampleHeader.appendChild(sampleLabel);
 
-    const progressBar = document.createElement('div');
-    progressBar.id = `bar-${f.id}`;
-    progressBar.style.height = '100%';
-    progressBar.style.width = '0%';
-    progressBar.style.background = 'linear-gradient(90deg, #4ade80, #22c55e)';
-    progressBar.style.transition = 'width 0.3s ease';
+    const structuresContainer = document.createElement('div');
+    structuresContainer.style.paddingLeft = '20px';
+    structuresContainer.style.maxHeight = '1000px';
+    structuresContainer.style.overflow = 'hidden';
+    structuresContainer.style.transition = 'max-height 0.3s ease';
 
-    progressContainer.appendChild(progressBar);
-    wrapper.appendChild(row);
-    wrapper.appendChild(progressContainer);
-    controlsContainer.appendChild(wrapper);
+    sampleHeader.onclick = () => {
+      const isOpen = arrow.classList.contains('open');
+      if (isOpen) {
+        arrow.classList.remove('open');
+        structuresContainer.style.maxHeight = '0px';
+      } else {
+        arrow.classList.add('open');
+        structuresContainer.style.maxHeight = '1000px';
+      }
+    };
+
+    // Structure level
+    for (const structure of sample.structures) {
+      const structureWrapper = document.createElement('div');
+      structureWrapper.style.marginBottom = '4px';
+
+      const structureRow = document.createElement('div');
+      structureRow.style.display = 'flex';
+      structureRow.style.alignItems = 'center';
+      structureRow.style.padding = '10px 20px';
+      structureRow.style.transition = 'background 0.2s ease';
+      structureRow.style.borderRadius = '6px';
+      structureRow.style.margin = '0 8px';
+      structureRow.style.gap = '10px';
+
+      structureRow.onmouseenter = () => {
+        structureRow.style.background = 'rgba(255, 255, 255, 0.08)';
+      };
+      structureRow.onmouseleave = () => {
+        structureRow.style.background = 'transparent';
+      };
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'checkbox-custom';
+      cb.id = `toggle-${structure.id}`;
+      cb.dataset.featureId = structure.id;
+      cb.dataset.sampleId = sample.id;
+
+      const colorIndicator = document.createElement('span');
+      colorIndicator.className = 'color-indicator';
+      colorIndicator.style.width = '12px';
+      colorIndicator.style.height = '12px';
+      colorIndicator.style.borderRadius = '3px';
+      colorIndicator.style.background = `#${structure.color.toString(16).padStart(6, '0')}`;
+      colorIndicator.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.3)';
+      colorIndicator.style.position = 'relative';
+
+      // Hidden color picker input
+      const colorPicker = document.createElement('input');
+      colorPicker.type = 'color';
+      colorPicker.className = 'color-picker-input';
+      colorPicker.value = `#${structure.color.toString(16).padStart(6, '0')}`;
+      colorPicker.dataset.featureId = structure.id;
+
+      // Click handler for color indicator
+      colorIndicator.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        colorPicker.click();
+      };
+
+      // Color picker change handler
+      colorPicker.onchange = (e) => {
+        const newColor = e.target.value;
+        colorIndicator.style.background = newColor;
+        
+        // Update the mesh color if it exists
+        const mesh = featureMeshes.get(structure.id);
+        if (mesh) {
+          mesh.material.color.setStyle(newColor);
+        }
+        
+        // Update the structure color in the data
+        structure.color = parseInt(newColor.replace('#', ''), 16);
+      };
+
+      const text = document.createElement('span');
+      text.textContent = structure.label;
+      text.style.fontSize = '13px';
+      text.style.color = 'rgba(255, 255, 255, 0.8)';
+      text.style.fontWeight = '500';
+      text.style.flex = '1';
+
+      // Opacity control
+      const opacityContainer = document.createElement('div');
+      opacityContainer.style.display = 'flex';
+      opacityContainer.style.alignItems = 'center';
+      opacityContainer.style.gap = '6px';
+      opacityContainer.style.flexShrink = '0';
+
+      const opacityLabel = document.createElement('span');
+      opacityLabel.style.fontSize = '10px';
+      opacityLabel.style.color = 'rgba(255, 255, 255, 0.5)';
+      opacityLabel.style.minWidth = '30px';
+      opacityLabel.style.textAlign = 'right';
+      opacityLabel.textContent = Math.round(structure.opacity * 100) + '%';
+
+      const opacitySlider = document.createElement('input');
+      opacitySlider.type = 'range';
+      opacitySlider.min = '0';
+      opacitySlider.max = '100';
+      opacitySlider.value = structure.opacity * 100;
+      opacitySlider.dataset.featureId = structure.id;
+      opacitySlider.style.width = '60px';
+      opacitySlider.style.cursor = 'pointer';
+      opacitySlider.style.accentColor = '#667eea';
+
+      // Opacity slider change handler
+      opacitySlider.oninput = (e) => {
+        e.stopPropagation();
+        const newOpacity = parseFloat(e.target.value) / 100;
+        opacityLabel.textContent = Math.round(newOpacity * 100) + '%';
+        
+        // Update the mesh opacity if it exists
+        const mesh = featureMeshes.get(structure.id);
+        if (mesh) {
+          mesh.material.opacity = newOpacity;
+          mesh.material.transparent = newOpacity < 1.0;
+          mesh.material.depthWrite = newOpacity >= 1.0;
+          mesh.renderOrder = newOpacity < 1.0 ? 999 : 0;
+          mesh.material.needsUpdate = true;
+        }
+        
+        // Update the structure opacity in the data
+        structure.opacity = newOpacity;
+      };
+
+      opacityContainer.appendChild(opacitySlider);
+      opacityContainer.appendChild(opacityLabel);
+
+      structureRow.appendChild(cb);
+      structureRow.appendChild(colorIndicator);
+      structureRow.appendChild(colorPicker);
+      structureRow.appendChild(text);
+      structureRow.appendChild(opacityContainer);
+
+      // Loading bar
+      const progressContainer = document.createElement('div');
+      progressContainer.id = `progress-${structure.id}`;
+      progressContainer.style.display = 'none';
+      progressContainer.style.marginTop = '6px';
+      progressContainer.style.marginLeft = '48px';
+      progressContainer.style.marginRight = '20px';
+      progressContainer.style.height = '3px';
+      progressContainer.style.background = 'rgba(255, 255, 255, 0.1)';
+      progressContainer.style.borderRadius = '2px';
+      progressContainer.style.overflow = 'hidden';
+
+      const progressBar = document.createElement('div');
+      progressBar.id = `bar-${structure.id}`;
+      progressBar.style.height = '100%';
+      progressBar.style.width = '0%';
+      progressBar.style.background = 'linear-gradient(90deg, #667eea, #764ba2)';
+      progressBar.style.transition = 'width 0.3s ease';
+
+      progressContainer.appendChild(progressBar);
+      structureWrapper.appendChild(structureRow);
+      structureWrapper.appendChild(progressContainer);
+      structuresContainer.appendChild(structureWrapper);
+    }
+
+    sampleWrapper.appendChild(sampleHeader);
+    sampleWrapper.appendChild(structuresContainer);
+    controlsContainer.appendChild(sampleWrapper);
   }
 
   const viewport = document.createElement('div');
@@ -112,6 +361,7 @@
   viewport.style.right = '0';
   viewport.style.top = '0';
   viewport.style.bottom = '0';
+  viewport.style.background = 'transparent';
   document.body.appendChild(viewport);
 
   // ---- Three.js setup --------------------------------------------------------
@@ -175,15 +425,22 @@
 
         const mat = new THREE.MeshLambertMaterial({
           color: f.color,
-          transparent: true,
+          transparent: f.opacity < 1.0,
           opacity: f.opacity,
-          side: f.id === 'eye' ? THREE.DoubleSide : THREE.FrontSide,
-          depthWrite: f.id === 'eye' ? false : true,
+          side: THREE.FrontSide,
+          depthWrite: f.opacity >= 1.0,
           depthTest: true
         });
 
         const mesh = new THREE.Mesh(geometry, mat);
-        mesh.renderOrder = f.id === 'eye' ? 0 : 999;
+        
+        // Sort transparent objects to render after opaque ones
+        if (f.opacity < 1.0) {
+          mesh.renderOrder = 999;
+        } else {
+          mesh.renderOrder = 0;
+        }
+        
         featureMeshes.set(f.id, mesh);
         scene.add(mesh);
         
@@ -214,18 +471,24 @@
     );
   }
 
-  // Checkbox handler
+  // Checkbox handler - updated for new data structure
   controlsContainer.addEventListener('change', e => {
     const target = e.target;
     if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
     const id = target.dataset.featureId;
-    const f = features.find(x => x.id === id);
-    if (!f) return;
+    
+    // Find the structure in the hierarchical data
+    let structure = null;
+    for (const sample of samplesData.samples) {
+      structure = sample.structures.find(s => s.id === id);
+      if (structure) break;
+    }
+    if (!structure) return;
 
     const existing = featureMeshes.get(id);
     if (target.checked) {
       if (existing) existing.visible = true;
-      else loadFeature(f);
+      else loadFeature(structure);
     } else {
       if (existing) existing.visible = false;
     }
