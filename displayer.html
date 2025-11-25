@@ -1,3 +1,11 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D STL Viewer</title>
+</head>
+<body>
 <script type="module">
   import * as THREE from 'https://esm.sh/three';
   import { STLLoader } from 'https://esm.sh/three/examples/jsm/loaders/STLLoader.js';
@@ -7,14 +15,14 @@
   const features = [
     {
       id: 'eye',
-      label: 'eye (from Hugging Face)',
+      label: 'eye',
       path: 'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main/sample_1_seg_mesh/eye.stl',
       color: 0x22cc55,
       opacity: 0.2
     },
     {
       id: 'feature',
-      label: 'feature (from Hugging Face)',
+      label: 'feature',
       path: 'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main/sample_1_seg_mesh/feature.stl',
       color: 0x0077ff,
       opacity: 1.0
@@ -50,6 +58,11 @@
   sidebar.appendChild(controlsContainer);
 
   for (const f of features) {
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.gap = '4px';
+
     const row = document.createElement('label');
     row.style.display = 'flex';
     row.style.gap = '8px';
@@ -67,7 +80,29 @@
 
     row.appendChild(cb);
     row.appendChild(text);
-    controlsContainer.appendChild(row);
+
+    // Loading bar container
+    const progressContainer = document.createElement('div');
+    progressContainer.id = `progress-${f.id}`;
+    progressContainer.style.display = 'none';
+    progressContainer.style.width = 'calc(100% - 28px)';
+    progressContainer.style.height = '3px';
+    progressContainer.style.background = 'rgba(255,255,255,0.1)';
+    progressContainer.style.borderRadius = '2px';
+    progressContainer.style.overflow = 'hidden';
+    progressContainer.style.marginLeft = '28px';
+
+    const progressBar = document.createElement('div');
+    progressBar.id = `bar-${f.id}`;
+    progressBar.style.height = '100%';
+    progressBar.style.width = '0%';
+    progressBar.style.background = 'linear-gradient(90deg, #4ade80, #22c55e)';
+    progressBar.style.transition = 'width 0.3s ease';
+
+    progressContainer.appendChild(progressBar);
+    wrapper.appendChild(row);
+    wrapper.appendChild(progressContainer);
+    controlsContainer.appendChild(wrapper);
   }
 
   const viewport = document.createElement('div');
@@ -114,37 +149,69 @@
   const featureMeshes = new Map();
 
   function loadFeature(f, onDone) {
-    loader.load(f.path, geometry => {
-      geometry.computeBoundingBox();
-      const center = new THREE.Vector3();
-      geometry.boundingBox.getCenter(center);
-      geometry.translate(-center.x, -center.y, -center.z);
+    const progressContainer = document.getElementById(`progress-${f.id}`);
+    const progressBar = document.getElementById(`bar-${f.id}`);
+    
+    // Show loading bar
+    if (progressContainer) progressContainer.style.display = 'block';
+    if (progressBar) progressBar.style.width = '10%';
 
-      if (!baseCenterTranslation) {
-        baseCenterTranslation = center.clone().multiplyScalar(-1);
-      } else {
-        geometry.translate(baseCenterTranslation.x, baseCenterTranslation.y, baseCenterTranslation.z);
-        geometry.translate(center.x, center.y, center.z);
+    loader.load(
+      f.path,
+      geometry => {
+        if (progressBar) progressBar.style.width = '100%';
+        
+        geometry.computeBoundingBox();
+        const center = new THREE.Vector3();
+        geometry.boundingBox.getCenter(center);
+        geometry.translate(-center.x, -center.y, -center.z);
+
+        if (!baseCenterTranslation) {
+          baseCenterTranslation = center.clone().multiplyScalar(-1);
+        } else {
+          geometry.translate(baseCenterTranslation.x, baseCenterTranslation.y, baseCenterTranslation.z);
+          geometry.translate(center.x, center.y, center.z);
+        }
+
+        const mat = new THREE.MeshLambertMaterial({
+          color: f.color,
+          transparent: true,
+          opacity: f.opacity,
+          side: f.id === 'eye' ? THREE.DoubleSide : THREE.FrontSide,
+          depthWrite: f.id === 'eye' ? false : true,
+          depthTest: true
+        });
+
+        const mesh = new THREE.Mesh(geometry, mat);
+        mesh.renderOrder = f.id === 'eye' ? 0 : 999;
+        featureMeshes.set(f.id, mesh);
+        scene.add(mesh);
+        
+        // Hide loading bar after a brief delay
+        setTimeout(() => {
+          if (progressContainer) progressContainer.style.display = 'none';
+          if (progressBar) progressBar.style.width = '0%';
+        }, 300);
+        
+        onDone?.(mesh);
+      },
+      xhr => {
+        // Progress callback
+        if (xhr.lengthComputable && progressBar) {
+          const percentComplete = (xhr.loaded / xhr.total) * 100;
+          progressBar.style.width = Math.min(percentComplete, 90) + '%';
+        } else if (progressBar) {
+          // Indeterminate progress
+          progressBar.style.width = '50%';
+        }
+      },
+      e => {
+        console.error(`❌ ${f.id} load error:`, e);
+        if (progressContainer) progressContainer.style.display = 'none';
+        if (progressBar) progressBar.style.width = '0%';
+        onDone?.(null);
       }
-
-      const mat = new THREE.MeshLambertMaterial({
-        color: f.color,
-        transparent: true,
-        opacity: f.opacity,
-        side: f.id === 'eye' ? THREE.DoubleSide : THREE.FrontSide,
-        depthWrite: f.id === 'eye' ? false : true,
-        depthTest: true
-      });
-
-      const mesh = new THREE.Mesh(geometry, mat);
-      mesh.renderOrder = f.id === 'eye' ? 0 : 999;
-      featureMeshes.set(f.id, mesh);
-      scene.add(mesh);
-      onDone?.(mesh);
-    }, undefined, e => {
-      console.error(`❌ ${f.id} load error:`, e);
-      onDone?.(null);
-    });
+    );
   }
 
   // Checkbox handler
@@ -174,3 +241,5 @@
   }
   animate();
 </script>
+</body>
+</html>
