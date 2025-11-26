@@ -21,13 +21,15 @@
     <span class="toggle-arrow">▶</span>
   </button>
   <div id="viewport"></div>
+  <div id="loading-indicator" style="display: none;">Loading CSV data...</div>
 
   <script type="module">
     import * as THREE from 'https://esm.sh/three';
     import { STLLoader } from 'https://esm.sh/three/examples/jsm/loaders/STLLoader.js';
     import { OrbitControls } from 'https://esm.sh/three/examples/jsm/controls/OrbitControls.js';
+    import { loadCSVData, samplesData } from './data-loader.js';
 
-    // Sidebar toggle functionality
+    // ==================== SIDEBAR TOGGLE ====================
     const sidebar = document.getElementById('sidebar');
     const sidebarToggle = document.getElementById('sidebar-toggle');
     const sidebarRestore = document.getElementById('sidebar-restore');
@@ -54,175 +56,152 @@
     sidebarToggle.addEventListener('click', toggleSidebar);
     sidebarRestore.addEventListener('click', toggleSidebar);
 
-    // ---------- CONFIG: hierarchical structure ----------
-    const samplesData = {
-      samples: [
-        {
-          id: 'sample_1',
-          label: 'Sample 1',
-          structures: [
-            {
-              id: 'eye',
-              label: 'Primary Structure',
-              path: 'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main/sample_1_seg_mesh/eye.stl',
-              color: 0x22cc55,
-              opacity: 0.2
-            },
-            {
-              id: 'feature',
-              label: 'Example Feature',
-              path: 'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main/sample_1_seg_mesh/feature.stl',
-              color: 0x0077ff,
-              opacity: 1.0
-            }
-          ]
-        }
-      ]
-    };
-    // ----------------------------------------------------
-
+    // ==================== UI BUILDING ====================
     const controlsContainer = document.getElementById('controls-container');
 
-    // Build hierarchical menu
-    for (const sample of samplesData.samples) {
-      const sampleWrapper = document.createElement('div');
-      sampleWrapper.className = 'sample-wrapper';
+    function buildUI() {
+      controlsContainer.innerHTML = '';
+      
+      for (const sample of samplesData.samples) {
+        const sampleWrapper = document.createElement('div');
+        sampleWrapper.className = 'sample-wrapper';
 
-      const sampleHeader = document.createElement('div');
-      sampleHeader.className = 'sample-header';
+        const sampleHeader = document.createElement('div');
+        sampleHeader.className = 'sample-header';
 
-      const arrow = document.createElement('span');
-      arrow.className = 'dropdown-arrow open';
-      arrow.textContent = '▶';
+        const arrow = document.createElement('span');
+        arrow.className = 'dropdown-arrow open';
+        arrow.textContent = '▶';
 
-      const sampleLabel = document.createElement('span');
-      sampleLabel.textContent = sample.label;
+        const sampleLabel = document.createElement('span');
+        sampleLabel.textContent = sample.label;
 
-      sampleHeader.appendChild(arrow);
-      sampleHeader.appendChild(sampleLabel);
+        sampleHeader.appendChild(arrow);
+        sampleHeader.appendChild(sampleLabel);
 
-      const structuresContainer = document.createElement('div');
-      structuresContainer.className = 'structures-container open';
+        const structuresContainer = document.createElement('div');
+        structuresContainer.className = 'structures-container open';
 
-      sampleHeader.onclick = () => {
-        const isOpen = arrow.classList.contains('open');
-        if (isOpen) {
-          arrow.classList.remove('open');
-          structuresContainer.classList.remove('open');
-        } else {
-          arrow.classList.add('open');
-          structuresContainer.classList.add('open');
+        sampleHeader.onclick = () => {
+          const isOpen = arrow.classList.contains('open');
+          if (isOpen) {
+            arrow.classList.remove('open');
+            structuresContainer.classList.remove('open');
+          } else {
+            arrow.classList.add('open');
+            structuresContainer.classList.add('open');
+          }
+        };
+
+        // Structure level
+        for (const structure of sample.structures) {
+          const structureWrapper = document.createElement('div');
+          structureWrapper.className = 'structure-wrapper';
+
+          const structureRow = document.createElement('div');
+          structureRow.className = 'structure-row';
+
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.className = 'checkbox-custom';
+          cb.id = `toggle-${structure.id}`;
+          cb.dataset.featureId = structure.id;
+          cb.dataset.sampleId = sample.id;
+
+          const colorIndicator = document.createElement('span');
+          colorIndicator.className = 'color-indicator';
+          colorIndicator.style.background = `#${structure.color.toString(16).padStart(6, '0')}`;
+
+          const colorPicker = document.createElement('input');
+          colorPicker.type = 'color';
+          colorPicker.className = 'color-picker-input';
+          colorPicker.value = `#${structure.color.toString(16).padStart(6, '0')}`;
+          colorPicker.dataset.featureId = structure.id;
+
+          colorIndicator.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            colorPicker.click();
+          };
+
+          colorPicker.onchange = (e) => {
+            const newColor = e.target.value;
+            colorIndicator.style.background = newColor;
+            
+            const mesh = featureMeshes.get(structure.id);
+            if (mesh) {
+              mesh.material.color.setStyle(newColor);
+            }
+            
+            structure.color = parseInt(newColor.replace('#', ''), 16);
+          };
+
+          const text = document.createElement('span');
+          text.className = 'structure-label';
+          text.textContent = structure.label;
+
+          const opacityContainer = document.createElement('div');
+          opacityContainer.className = 'opacity-container';
+
+          const opacitySlider = document.createElement('input');
+          opacitySlider.type = 'range';
+          opacitySlider.className = 'opacity-slider';
+          opacitySlider.min = '0';
+          opacitySlider.max = '100';
+          opacitySlider.value = structure.opacity * 100;
+          opacitySlider.dataset.featureId = structure.id;
+
+          const opacityLabel = document.createElement('span');
+          opacityLabel.className = 'opacity-label';
+          opacityLabel.textContent = Math.round(structure.opacity * 100) + '%';
+
+          opacitySlider.oninput = (e) => {
+            e.stopPropagation();
+            const newOpacity = parseFloat(e.target.value) / 100;
+            opacityLabel.textContent = Math.round(newOpacity * 100) + '%';
+            
+            const mesh = featureMeshes.get(structure.id);
+            if (mesh) {
+              mesh.material.opacity = newOpacity;
+              mesh.material.transparent = newOpacity < 1.0;
+              mesh.material.depthWrite = newOpacity >= 1.0;
+              mesh.renderOrder = newOpacity < 1.0 ? 999 : 0;
+              mesh.material.needsUpdate = true;
+            }
+            
+            structure.opacity = newOpacity;
+          };
+
+          opacityContainer.appendChild(opacitySlider);
+          opacityContainer.appendChild(opacityLabel);
+
+          structureRow.appendChild(cb);
+          structureRow.appendChild(colorIndicator);
+          structureRow.appendChild(colorPicker);
+          structureRow.appendChild(text);
+          structureRow.appendChild(opacityContainer);
+
+          const progressContainer = document.createElement('div');
+          progressContainer.className = 'progress-container';
+          progressContainer.id = `progress-${structure.id}`;
+
+          const progressBar = document.createElement('div');
+          progressBar.className = 'progress-bar';
+          progressBar.id = `bar-${structure.id}`;
+
+          progressContainer.appendChild(progressBar);
+          structureWrapper.appendChild(structureRow);
+          structureWrapper.appendChild(progressContainer);
+          structuresContainer.appendChild(structureWrapper);
         }
-      };
 
-      // Structure level
-      for (const structure of sample.structures) {
-        const structureWrapper = document.createElement('div');
-        structureWrapper.className = 'structure-wrapper';
-
-        const structureRow = document.createElement('div');
-        structureRow.className = 'structure-row';
-
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.className = 'checkbox-custom';
-        cb.id = `toggle-${structure.id}`;
-        cb.dataset.featureId = structure.id;
-        cb.dataset.sampleId = sample.id;
-
-        const colorIndicator = document.createElement('span');
-        colorIndicator.className = 'color-indicator';
-        colorIndicator.style.background = `#${structure.color.toString(16).padStart(6, '0')}`;
-
-        const colorPicker = document.createElement('input');
-        colorPicker.type = 'color';
-        colorPicker.className = 'color-picker-input';
-        colorPicker.value = `#${structure.color.toString(16).padStart(6, '0')}`;
-        colorPicker.dataset.featureId = structure.id;
-
-        colorIndicator.onclick = (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          colorPicker.click();
-        };
-
-        colorPicker.onchange = (e) => {
-          const newColor = e.target.value;
-          colorIndicator.style.background = newColor;
-          
-          const mesh = featureMeshes.get(structure.id);
-          if (mesh) {
-            mesh.material.color.setStyle(newColor);
-          }
-          
-          structure.color = parseInt(newColor.replace('#', ''), 16);
-        };
-
-        const text = document.createElement('span');
-        text.className = 'structure-label';
-        text.textContent = structure.label;
-
-        const opacityContainer = document.createElement('div');
-        opacityContainer.className = 'opacity-container';
-
-        const opacitySlider = document.createElement('input');
-        opacitySlider.type = 'range';
-        opacitySlider.className = 'opacity-slider';
-        opacitySlider.min = '0';
-        opacitySlider.max = '100';
-        opacitySlider.value = structure.opacity * 100;
-        opacitySlider.dataset.featureId = structure.id;
-
-        const opacityLabel = document.createElement('span');
-        opacityLabel.className = 'opacity-label';
-        opacityLabel.textContent = Math.round(structure.opacity * 100) + '%';
-
-        opacitySlider.oninput = (e) => {
-          e.stopPropagation();
-          const newOpacity = parseFloat(e.target.value) / 100;
-          opacityLabel.textContent = Math.round(newOpacity * 100) + '%';
-          
-          const mesh = featureMeshes.get(structure.id);
-          if (mesh) {
-            mesh.material.opacity = newOpacity;
-            mesh.material.transparent = newOpacity < 1.0;
-            mesh.material.depthWrite = newOpacity >= 1.0;
-            mesh.renderOrder = newOpacity < 1.0 ? 999 : 0;
-            mesh.material.needsUpdate = true;
-          }
-          
-          structure.opacity = newOpacity;
-        };
-
-        opacityContainer.appendChild(opacitySlider);
-        opacityContainer.appendChild(opacityLabel);
-
-        structureRow.appendChild(cb);
-        structureRow.appendChild(colorIndicator);
-        structureRow.appendChild(colorPicker);
-        structureRow.appendChild(text);
-        structureRow.appendChild(opacityContainer);
-
-        const progressContainer = document.createElement('div');
-        progressContainer.className = 'progress-container';
-        progressContainer.id = `progress-${structure.id}`;
-
-        const progressBar = document.createElement('div');
-        progressBar.className = 'progress-bar';
-        progressBar.id = `bar-${structure.id}`;
-
-        progressContainer.appendChild(progressBar);
-        structureWrapper.appendChild(structureRow);
-        structureWrapper.appendChild(progressContainer);
-        structuresContainer.appendChild(structureWrapper);
+        sampleWrapper.appendChild(sampleHeader);
+        sampleWrapper.appendChild(structuresContainer);
+        controlsContainer.appendChild(sampleWrapper);
       }
-
-      sampleWrapper.appendChild(sampleHeader);
-      sampleWrapper.appendChild(structuresContainer);
-      controlsContainer.appendChild(sampleWrapper);
     }
 
-    // ---- Three.js setup --------------------------------------------------------
+    // ==================== THREE.JS SETUP ====================
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 10000);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -240,6 +219,7 @@
 
     const controls = new OrbitControls(camera, renderer.domElement);
 
+    // Lighting
     const hemi = new THREE.HemisphereLight(0xbec8ff, 0xffffff, 0.8);
     scene.add(hemi);
 
@@ -251,6 +231,7 @@
     fill.position.set(-1, -0.5, -1);
     scene.add(fill);
 
+    // ==================== STL LOADING ====================
     const loader = new STLLoader();
     let baseCenterTranslation = null;
     const featureMeshes = new Map();
@@ -323,6 +304,7 @@
       );
     }
 
+    // ==================== CHECKBOX EVENT HANDLER ====================
     controlsContainer.addEventListener('change', e => {
       const target = e.target;
       if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
@@ -344,6 +326,7 @@
       }
     });
 
+    // ==================== CAMERA AND ANIMATION ====================
     camera.position.set(0, 0, 700);
     camera.lookAt(0, 0, 0);
 
@@ -353,6 +336,14 @@
       renderer.render(scene, camera);
     }
     animate();
+
+    // ==================== INITIALIZE ====================
+    async function init() {
+      await loadCSVData();
+      buildUI();
+    }
+
+    init();
   </script>
 </body>
 </html>
