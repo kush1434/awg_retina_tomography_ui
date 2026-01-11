@@ -1,12 +1,48 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>3D STL Viewer</title>
-  <link rel="stylesheet" href="styles.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Split Viewer (Independent GLB | Independent STL)</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* Split area behind sidebar */
+    #split-wrap{
+      position:absolute; top:0; bottom:0;
+      left:320px; right:0;
+      display:flex;
+      transition: left 0.3s ease;
+    }
+    .pane{ position:relative; flex:1 1 50%; overflow:hidden; }
+    .pane canvas{
+      display:block; width:100%; height:100%;
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .pane canvas:active { cursor: grabbing; }
+    #divider{ width:1px; background:rgba(255,255,255,0.12); }
+
+    .pane-label{
+      position:absolute; top:12px; left:12px; z-index:10;
+      padding:8px 10px; border-radius:10px;
+      background:rgba(0,0,0,0.55); color:#fff;
+      font-family:system-ui, Arial; font-size:13px;
+      pointer-events:none;
+    }
+
+    #loading-indicator{
+      position:absolute; top:12px; right:12px; z-index:9999;
+      padding:10px 12px; border-radius:10px;
+      background:rgba(0,0,0,0.6); color:white;
+      font-family:system-ui, Arial; font-size:14px;
+      display:none;
+    }
+  </style>
 </head>
 <body>
+  <!-- Sidebar -->
   <div id="sidebar">
     <button id="sidebar-toggle" aria-label="Toggle sidebar">
       <span class="toggle-arrow">◀</span>
@@ -17,51 +53,280 @@
     </div>
     <div id="controls-container"></div>
   </div>
+
   <button id="sidebar-restore" aria-label="Show sidebar">
     <span class="toggle-arrow">▶</span>
   </button>
-  <div id="viewport"></div>
-  <div id="loading-indicator" style="display: none;">Loading CSV data...</div>
+
+  <!-- Split panes -->
+  <div id="split-wrap">
+    <div id="glb-pane" class="pane">
+      <div class="pane-label">GLB (Left)</div>
+    </div>
+    <div id="divider"></div>
+    <div id="stl-pane" class="pane">
+      <div class="pane-label">STL Layers (Right)</div>
+    </div>
+  </div>
+
+  <div id="loading-indicator">Loading...</div>
 
   <script type="module">
     import * as THREE from 'https://esm.sh/three';
     import { STLLoader } from 'https://esm.sh/three/examples/jsm/loaders/STLLoader.js';
+    import { GLTFLoader } from 'https://esm.sh/three/examples/jsm/loaders/GLTFLoader.js';
     import { OrbitControls } from 'https://esm.sh/three/examples/jsm/controls/OrbitControls.js';
     import { loadCSVData, samplesData } from './data-loader.js';
 
-    // ==================== SIDEBAR TOGGLE ====================
+    // ==================== DOM ====================
     const sidebar = document.getElementById('sidebar');
     const sidebarToggle = document.getElementById('sidebar-toggle');
     const sidebarRestore = document.getElementById('sidebar-restore');
-    const viewport = document.getElementById('viewport');
-    
+    const splitWrap = document.getElementById('split-wrap');
+    const glbPane = document.getElementById('glb-pane');
+    const stlPane = document.getElementById('stl-pane');
+    const controlsContainer = document.getElementById('controls-container');
+    const loadingIndicator = document.getElementById('loading-indicator');
+
+    function showLoading(text) {
+      loadingIndicator.style.display = 'block';
+      loadingIndicator.textContent = text || 'Loading...';
+      loadingIndicator.style.color = 'white';
+    }
+    function hideLoading() {
+      loadingIndicator.style.display = 'none';
+    }
+
+    // ==================== SIDEBAR TOGGLE ====================
     let sidebarCollapsed = false;
-    
     function toggleSidebar() {
       sidebarCollapsed = !sidebarCollapsed;
-      
+
       if (sidebarCollapsed) {
         sidebar.style.transform = 'translateX(-320px)';
-        viewport.style.left = '0';
+        splitWrap.style.left = '0';
         sidebarToggle.classList.add('hidden');
         sidebarRestore.classList.add('visible');
       } else {
         sidebar.style.transform = 'translateX(0)';
-        viewport.style.left = '320px';
+        splitWrap.style.left = '320px';
         sidebarToggle.classList.remove('hidden');
         sidebarRestore.classList.remove('visible');
       }
+
+      requestAnimationFrame(() => { sizeGLB(); sizeSTL(); });
+      setTimeout(() => { sizeGLB(); sizeSTL(); }, 250);
     }
-    
     sidebarToggle.addEventListener('click', toggleSidebar);
     sidebarRestore.addEventListener('click', toggleSidebar);
 
-    // ==================== UI BUILDING ====================
-    const controlsContainer = document.getElementById('controls-container');
+    // ==================== HELPERS ====================
+    function addDefaultLights(scene) {
+      scene.background = new THREE.Color(0x111111);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.65));
 
+      const hemi = new THREE.HemisphereLight(0xbec8ff, 0xffffff, 0.55);
+      scene.add(hemi);
+
+      const dir1 = new THREE.DirectionalLight(0xffffff, 0.9);
+      dir1.position.set(1, 1, 1);
+      scene.add(dir1);
+
+      const dir2 = new THREE.DirectionalLight(0xffffff, 0.5);
+      dir2.position.set(-1, -0.5, -1);
+      scene.add(dir2);
+    }
+
+    function fitCameraToObject(camera, controls, object, offset = 1.35, isSTL = false) {
+      const box = new THREE.Box3().setFromObject(object);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const fov = camera.fov * (Math.PI / 180);
+      let cameraZ = Math.abs((maxDim / 2) / Math.tan(fov / 2));
+
+      if (isSTL) cameraZ *= offset * 1.8;
+      else cameraZ *= offset;
+
+      camera.near = Math.max(0.01, maxDim / 1000);
+      camera.far  = Math.max(2000, maxDim * 1000);
+      camera.updateProjectionMatrix();
+
+      camera.position.set(center.x, center.y, center.z + cameraZ);
+      controls.target.copy(center);
+      controls.update();
+    }
+
+    // ==================== GLB (LEFT) ====================
+    const glbScene = new THREE.Scene();
+    addDefaultLights(glbScene);
+
+    const glbCamera = new THREE.PerspectiveCamera(60, 1, 0.01, 1e7);
+    const glbRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    glbPane.appendChild(glbRenderer.domElement);
+
+    const glbControls = new OrbitControls(glbCamera, glbRenderer.domElement);
+    glbControls.enableDamping = true;
+    glbControls.dampingFactor = 0.05;
+    glbControls.enableZoom = true;
+    glbControls.enableRotate = true;
+    glbControls.enablePan = true;
+
+    function sizeGLB() {
+      const w = glbPane.clientWidth || 1;
+      const h = glbPane.clientHeight || 1;
+      glbRenderer.setSize(w, h, false);
+      glbCamera.aspect = w / h;
+      glbCamera.updateProjectionMatrix();
+    }
+
+    const gltfLoader = new GLTFLoader();
+    let glbModel = null;
+
+    // Hugging Face GLB URL
+    const GLB_URL =
+      'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main/eye-anatomy.glb';
+
+    // Robust loader: fetch -> parse (avoids some redirect/CORS edge cases)
+    async function loadGLBFromURL(url) {
+      showLoading('Loading GLB...');
+      try {
+        const res = await fetch(url, { mode: 'cors' });
+        if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+
+        const buffer = await res.arrayBuffer();
+
+        gltfLoader.parse(
+          buffer,
+          '',
+          (gltf) => {
+            if (glbModel) glbScene.remove(glbModel);
+            glbModel = gltf.scene;
+
+            glbModel.traverse((child) => {
+              if (child.isMesh) {
+                child.frustumCulled = false;
+                if (child.material) {
+                  child.material.side = THREE.DoubleSide;
+                  child.material.transparent = false;
+                  child.material.opacity = 1.0;
+                  child.material.needsUpdate = true;
+                }
+              }
+            });
+
+            glbScene.add(glbModel);
+            fitCameraToObject(glbCamera, glbControls, glbModel, 1.4);
+
+            hideLoading();
+            console.log('✅ GLB loaded:', url);
+          },
+          (err) => {
+            console.error('❌ GLB parse error:', err);
+            showLoading('Error parsing GLB.');
+            loadingIndicator.style.color = 'red';
+          }
+        );
+      } catch (err) {
+        console.error('❌ GLB fetch error:', err);
+        showLoading('Error loading GLB (fetch failed).');
+        loadingIndicator.style.color = 'red';
+      }
+    }
+
+    // ==================== STL (RIGHT) ====================
+    const stlScene = new THREE.Scene();
+    addDefaultLights(stlScene);
+
+    const stlCamera = new THREE.PerspectiveCamera(60, 1, 0.01, 1e7);
+    const stlRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    stlPane.appendChild(stlRenderer.domElement);
+
+    const stlControls = new OrbitControls(stlCamera, stlRenderer.domElement);
+    stlControls.enableDamping = true;
+    stlControls.dampingFactor = 0.05;
+    stlControls.enableZoom = true;
+    stlControls.enableRotate = true;
+    stlControls.enablePan = true;
+
+    function sizeSTL() {
+      const w = stlPane.clientWidth || 1;
+      const h = stlPane.clientHeight || 1;
+      stlRenderer.setSize(w, h, false);
+      stlCamera.aspect = w / h;
+      stlCamera.updateProjectionMatrix();
+    }
+
+    const stlRoot = new THREE.Group();
+    stlScene.add(stlRoot);
+
+    function fitSTLViewIfPossible() {
+      if (stlRoot.children.length === 0) return;
+      fitCameraToObject(stlCamera, stlControls, stlRoot, 1.4, true);
+    }
+
+    const stlLoader = new STLLoader();
+    const featureMeshes = new Map();
+
+    function loadFeature(f, onDone) {
+      const progressContainer = document.getElementById(`progress-${f.id}`);
+      const progressBar = document.getElementById(`bar-${f.id}`);
+
+      if (progressContainer) progressContainer.style.display = 'block';
+      if (progressBar) progressBar.style.width = '10%';
+
+      stlLoader.load(
+        f.path,
+        (geometry) => {
+          if (progressBar) progressBar.style.width = '100%';
+          geometry.computeVertexNormals();
+
+          const mat = new THREE.MeshLambertMaterial({
+            color: f.color,
+            transparent: f.opacity < 1.0,
+            opacity: f.opacity,
+            side: THREE.FrontSide,
+            depthWrite: f.opacity >= 1.0,
+            depthTest: true
+          });
+
+          const mesh = new THREE.Mesh(geometry, mat);
+          mesh.renderOrder = f.opacity < 1.0 ? 999 : 0;
+
+          featureMeshes.set(f.id, mesh);
+          stlRoot.add(mesh);
+
+          fitSTLViewIfPossible();
+
+          setTimeout(() => {
+            if (progressContainer) progressContainer.style.display = 'none';
+            if (progressBar) progressBar.style.width = '0%';
+          }, 300);
+
+          onDone?.(mesh);
+        },
+        (xhr) => {
+          if (xhr.lengthComputable && progressBar) {
+            const pct = (xhr.loaded / xhr.total) * 100;
+            progressBar.style.width = Math.min(pct, 90) + '%';
+          } else if (progressBar) {
+            progressBar.style.width = '50%';
+          }
+        },
+        (e) => {
+          console.error(`❌ ${f.id} STL load error:`, e);
+          if (progressContainer) progressContainer.style.display = 'none';
+          if (progressBar) progressBar.style.width = '0%';
+          onDone?.(null);
+        }
+      );
+    }
+
+    // ==================== UI BUILDING ====================
     function buildUI() {
       controlsContainer.innerHTML = '';
-      
+
       for (const sample of samplesData.samples) {
         const sampleWrapper = document.createElement('div');
         sampleWrapper.className = 'sample-wrapper';
@@ -93,7 +358,6 @@
           }
         };
 
-        // Structure level
         for (const structure of sample.structures) {
           const structureWrapper = document.createElement('div');
           structureWrapper.className = 'structure-wrapper';
@@ -106,7 +370,6 @@
           cb.className = 'checkbox-custom';
           cb.id = `toggle-${structure.id}`;
           cb.dataset.featureId = structure.id;
-          cb.dataset.sampleId = sample.id;
 
           const colorIndicator = document.createElement('span');
           colorIndicator.className = 'color-indicator';
@@ -127,12 +390,10 @@
           colorPicker.onchange = (e) => {
             const newColor = e.target.value;
             colorIndicator.style.background = newColor;
-            
+
             const mesh = featureMeshes.get(structure.id);
-            if (mesh) {
-              mesh.material.color.setStyle(newColor);
-            }
-            
+            if (mesh) mesh.material.color.setStyle(newColor);
+
             structure.color = parseInt(newColor.replace('#', ''), 16);
           };
 
@@ -159,7 +420,7 @@
             e.stopPropagation();
             const newOpacity = parseFloat(e.target.value) / 100;
             opacityLabel.textContent = Math.round(newOpacity * 100) + '%';
-            
+
             const mesh = featureMeshes.get(structure.id);
             if (mesh) {
               mesh.material.opacity = newOpacity;
@@ -168,7 +429,7 @@
               mesh.renderOrder = newOpacity < 1.0 ? 999 : 0;
               mesh.material.needsUpdate = true;
             }
-            
+
             structure.opacity = newOpacity;
           };
 
@@ -190,6 +451,7 @@
           progressBar.id = `bar-${structure.id}`;
 
           progressContainer.appendChild(progressBar);
+
           structureWrapper.appendChild(structureRow);
           structureWrapper.appendChild(progressContainer);
           structuresContainer.appendChild(structureWrapper);
@@ -201,146 +463,66 @@
       }
     }
 
-    // ==================== THREE.JS SETUP ====================
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 10000);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    viewport.appendChild(renderer.domElement);
-
-    function sizeRenderer() {
-      const w = viewport.clientWidth;
-      const h = viewport.clientHeight;
-      renderer.setSize(w, h, false);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-    }
-    sizeRenderer();
-    window.addEventListener('resize', sizeRenderer);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-
-    // Lighting
-    const hemi = new THREE.HemisphereLight(0xbec8ff, 0xffffff, 0.8);
-    scene.add(hemi);
-
-    const headlight = new THREE.DirectionalLight(0xffffff, 0.8);
-    camera.add(headlight);
-    scene.add(camera);
-
-    const fill = new THREE.DirectionalLight(0xffffff, 0.3);
-    fill.position.set(-1, -0.5, -1);
-    scene.add(fill);
-
-    // ==================== STL LOADING ====================
-    const loader = new STLLoader();
-    let baseCenterTranslation = null;
-    const featureMeshes = new Map();
-
-    function loadFeature(f, onDone) {
-      const progressContainer = document.getElementById(`progress-${f.id}`);
-      const progressBar = document.getElementById(`bar-${f.id}`);
-      
-      if (progressContainer) progressContainer.style.display = 'block';
-      if (progressBar) progressBar.style.width = '10%';
-
-      loader.load(
-        f.path,
-        geometry => {
-          if (progressBar) progressBar.style.width = '100%';
-          
-          geometry.computeBoundingBox();
-          const center = new THREE.Vector3();
-          geometry.boundingBox.getCenter(center);
-          geometry.translate(-center.x, -center.y, -center.z);
-
-          if (!baseCenterTranslation) {
-            baseCenterTranslation = center.clone().multiplyScalar(-1);
-          } else {
-            geometry.translate(baseCenterTranslation.x, baseCenterTranslation.y, baseCenterTranslation.z);
-            geometry.translate(center.x, center.y, center.z);
-          }
-
-          const mat = new THREE.MeshLambertMaterial({
-            color: f.color,
-            transparent: f.opacity < 1.0,
-            opacity: f.opacity,
-            side: THREE.FrontSide,
-            depthWrite: f.opacity >= 1.0,
-            depthTest: true
-          });
-
-          const mesh = new THREE.Mesh(geometry, mat);
-          
-          if (f.opacity < 1.0) {
-            mesh.renderOrder = 999;
-          } else {
-            mesh.renderOrder = 0;
-          }
-          
-          featureMeshes.set(f.id, mesh);
-          scene.add(mesh);
-          
-          setTimeout(() => {
-            if (progressContainer) progressContainer.style.display = 'none';
-            if (progressBar) progressBar.style.width = '0%';
-          }, 300);
-          
-          onDone?.(mesh);
-        },
-        xhr => {
-          if (xhr.lengthComputable && progressBar) {
-            const percentComplete = (xhr.loaded / xhr.total) * 100;
-            progressBar.style.width = Math.min(percentComplete, 90) + '%';
-          } else if (progressBar) {
-            progressBar.style.width = '50%';
-          }
-        },
-        e => {
-          console.error(`❌ ${f.id} load error:`, e);
-          if (progressContainer) progressContainer.style.display = 'none';
-          if (progressBar) progressBar.style.width = '0%';
-          onDone?.(null);
-        }
-      );
-    }
-
-    // ==================== CHECKBOX EVENT HANDLER ====================
-    controlsContainer.addEventListener('change', e => {
+    // Checkbox toggles (STL side)
+    controlsContainer.addEventListener('change', (e) => {
       const target = e.target;
       if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
+
       const id = target.dataset.featureId;
-      
+
       let structure = null;
       for (const sample of samplesData.samples) {
-        structure = sample.structures.find(s => s.id === id);
+        structure = sample.structures.find((s) => s.id === id);
         if (structure) break;
       }
       if (!structure) return;
 
       const existing = featureMeshes.get(id);
       if (target.checked) {
-        if (existing) existing.visible = true;
-        else loadFeature(structure);
+        if (existing) {
+          existing.visible = true;
+          fitSTLViewIfPossible();
+        } else {
+          loadFeature(structure);
+        }
       } else {
         if (existing) existing.visible = false;
+        fitSTLViewIfPossible();
       }
     });
 
-    // ==================== CAMERA AND ANIMATION ====================
-    camera.position.set(0, 0, 700);
-    camera.lookAt(0, 0, 0);
-
+    // ==================== RENDER LOOP ====================
     function animate() {
       requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    }
-    animate();
 
-    // ==================== INITIALIZE ====================
+      glbControls.update();
+      stlControls.update();
+
+      glbRenderer.render(glbScene, glbCamera);
+      stlRenderer.render(stlScene, stlCamera);
+    }
+
+    // ==================== INIT ====================
     async function init() {
+      sizeGLB();
+      sizeSTL();
+      window.addEventListener('resize', () => { sizeGLB(); sizeSTL(); });
+
+      // Load GLB (left) from Hugging Face
+      loadGLBFromURL(GLB_URL);
+
+      // Load CSV + build UI (right)
+      showLoading('Loading CSV data...');
       await loadCSVData();
       buildUI();
+      hideLoading();
+
+      // Default STL camera start
+      stlCamera.position.set(0, 0, 1500);
+      stlControls.target.set(0, 0, 0);
+      stlControls.update();
+
+      animate();
     }
 
     init();
