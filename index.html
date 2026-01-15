@@ -39,6 +39,22 @@
       font-family:system-ui, Arial; font-size:14px;
       display:none;
     }
+
+    /* Sync button styles */
+    .sync-button {
+      margin-top: 10px;
+      padding: 8px 12px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-family: system-ui, Arial;
+      font-size: 14px;
+    }
+    .sync-button:hover {
+      background: #0056b3;
+    }
   </style>
 </head>
 <body>
@@ -50,6 +66,7 @@
     <div id="header">
       <div class="header-title">3D Viewer</div>
       <div class="header-subtitle">Layer Controls</div>
+      <button id="sync-button" class="sync-button">Sync Views</button>
     </div>
     <div id="controls-container"></div>
   </div>
@@ -87,6 +104,7 @@
     const stlPane = document.getElementById('stl-pane');
     const controlsContainer = document.getElementById('controls-container');
     const loadingIndicator = document.getElementById('loading-indicator');
+    const syncButton = document.getElementById('sync-button');
 
     function showLoading(text) {
       loadingIndicator.style.display = 'block';
@@ -146,8 +164,7 @@
       const fov = camera.fov * (Math.PI / 180);
       let cameraZ = Math.abs((maxDim / 2) / Math.tan(fov / 2));
 
-      if (isSTL) cameraZ *= offset * 1.8;
-      else cameraZ *= offset;
+      cameraZ *= offset;
 
       camera.near = Math.max(0.01, maxDim / 1000);
       camera.far  = Math.max(2000, maxDim * 1000);
@@ -156,6 +173,8 @@
       camera.position.set(center.x, center.y, center.z + cameraZ);
       controls.target.copy(center);
       controls.update();
+
+      return cameraZ;
     }
 
     // ==================== GLB (LEFT) ====================
@@ -183,6 +202,7 @@
 
     const gltfLoader = new GLTFLoader();
     let glbModel = null;
+    let glbDefaultDist = 0;
 
     // Hugging Face GLB URL
     const GLB_URL =
@@ -217,7 +237,8 @@
             });
 
             glbScene.add(glbModel);
-            fitCameraToObject(glbCamera, glbControls, glbModel, 1.4);
+            const cameraZ = fitCameraToObject(glbCamera, glbControls, glbModel, 1.4);
+            glbDefaultDist = glbControls.getDistance();
 
             hideLoading();
             console.log('✅ GLB loaded:', url);
@@ -260,10 +281,12 @@
 
     const stlRoot = new THREE.Group();
     stlScene.add(stlRoot);
+    let stlDefaultDist = 1500;
 
     function fitSTLViewIfPossible() {
       if (stlRoot.children.length === 0) return;
-      fitCameraToObject(stlCamera, stlControls, stlRoot, 1.4, true);
+      const cameraZ = fitCameraToObject(stlCamera, stlControls, stlRoot, 1.4, true);
+      stlDefaultDist = stlControls.getDistance();
     }
 
     const stlLoader = new STLLoader();
@@ -488,6 +511,41 @@
       } else {
         if (existing) existing.visible = false;
         fitSTLViewIfPossible();
+      }
+    });
+
+    // ==================== SYNC LOGIC ====================
+    let syncEnabled = false;
+    let isSyncing = false;
+
+    function syncCameras(fromControls, toControls, fromDefault, toDefault) {
+      if (isSyncing) return;
+      isSyncing = true;
+
+      const dir = fromControls.object.position.clone().sub(fromControls.target).normalize();
+      const dist = fromControls.getDistance() * (toDefault / fromDefault || 1);
+      toControls.object.position.copy(toControls.target).add(dir.clone().multiplyScalar(dist));
+      toControls.object.lookAt(toControls.target);
+      toControls.update();
+
+      isSyncing = false;
+    }
+
+    const glbChangeListener = () => syncCameras(glbControls, stlControls, glbDefaultDist, stlDefaultDist);
+    const stlChangeListener = () => syncCameras(stlControls, glbControls, stlDefaultDist, glbDefaultDist);
+
+    syncButton.addEventListener('click', () => {
+      syncEnabled = !syncEnabled;
+      syncButton.textContent = syncEnabled ? 'Unsync Views' : 'Sync Views';
+
+      if (syncEnabled) {
+        glbControls.addEventListener('change', glbChangeListener);
+        stlControls.addEventListener('change', stlChangeListener);
+        // Initial sync from STL to GLB to keep STL position unchanged
+        syncCameras(stlControls, glbControls, stlDefaultDist, glbDefaultDist);
+      } else {
+        glbControls.removeEventListener('change', glbChangeListener);
+        stlControls.removeEventListener('change', stlChangeListener);
       }
     });
 
