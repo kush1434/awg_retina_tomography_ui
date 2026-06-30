@@ -1,0 +1,9 @@
+{
+  "name": "retina-optimize",
+  "private": true,
+  "type": "module",
+  "description": "STL -> GLB conversion for the Retina Tomography Viewer optimization pipeline",
+  "dependencies": {
+    "@gltf-transform/core": "^4.0.0"
+  }
+}

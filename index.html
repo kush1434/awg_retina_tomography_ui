@@ -2,588 +2,126 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Split Viewer (Independent GLB | Independent STL)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="Interactive 3D viewer for GeneLab AWG retina micro-tomography — compare eye anatomy with segmented tissue layers." />
+  <meta name="color-scheme" content="dark" />
+  <title>Retina Tomography Viewer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='11' fill='%230a0e14'/%3E%3Ccircle cx='12' cy='12' r='6.5' fill='none' stroke='%2338bdf8' stroke-width='1.6'/%3E%3Ccircle cx='12' cy='12' r='2.4' fill='%2338bdf8'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="styles.css" />
-  <style>
-    /* Split area behind sidebar */
-    #split-wrap{
-      position:absolute; top:0; bottom:0;
-      left:320px; right:0;
-      display:flex;
-      transition: left 0.3s ease;
-    }
-    .pane{ position:relative; flex:1 1 50%; overflow:hidden; }
-    .pane canvas{
-      display:block; width:100%; height:100%;
-      cursor: grab;
-      touch-action: none;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-    .pane canvas:active { cursor: grabbing; }
-    #divider{ width:1px; background:rgba(255,255,255,0.12); }
 
-    .pane-label{
-      position:absolute; top:12px; left:12px; z-index:10;
-      padding:8px 10px; border-radius:10px;
-      background:rgba(0,0,0,0.55); color:#fff;
-      font-family:system-ui, Arial; font-size:13px;
-      pointer-events:none;
+  <!-- Pin Three.js (stable) and map bare specifiers used across modules. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://esm.sh/three@0.169.0",
+      "three/addons/": "https://esm.sh/three@0.169.0/examples/jsm/"
     }
-
-    #loading-indicator{
-      position:absolute; top:12px; right:12px; z-index:9999;
-      padding:10px 12px; border-radius:10px;
-      background:rgba(0,0,0,0.6); color:white;
-      font-family:system-ui, Arial; font-size:14px;
-      display:none;
-    }
-
-    /* Sync button styles */
-    .sync-button {
-      margin-top: 10px;
-      padding: 8px 12px;
-      background: #007bff;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      font-family: system-ui, Arial;
-      font-size: 14px;
-    }
-    .sync-button:hover {
-      background: #0056b3;
-    }
-  </style>
+  }
+  </script>
 </head>
 <body>
-  <!-- Sidebar -->
-  <div id="sidebar">
-    <button id="sidebar-toggle" aria-label="Toggle sidebar">
-      <span class="toggle-arrow">◀</span>
+  <!-- ===================== Top bar ===================== -->
+  <header id="appbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <circle cx="12" cy="12" r="3.4" fill="currentColor"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-title">Retina Tomography Viewer</span>
+        <span class="brand-sub">GeneLab · Analysis Working Group</span>
+      </div>
+    </div>
+
+    <div class="appbar-actions">
+      <button id="btn-sync" class="btn btn-toggle" aria-pressed="false" title="Link rotation of both views">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 7h7l-2-2 1.4-1.4L18 8l-4.6 4.4L12 11l2-2H7a3 3 0 00-3 3H2a5 5 0 015-5zm10 10h-7l2 2-1.4 1.4L6 16l4.6-4.4L12 13l-2 2h7a3 3 0 003-3h2a5 5 0 01-5 5z"/></svg>
+        <span>Sync</span>
+      </button>
+      <button id="btn-reset" class="btn" title="Reset both views">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 11-5 5H5a7 7 0 107-7z"/></svg>
+        <span>Reset</span>
+      </button>
+      <button id="btn-help" class="btn btn-icon" title="Help" aria-label="Help">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 18h2v-2h-2v2zm1-16a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm0-13a3 3 0 00-3 3h2a1 1 0 112 0c0 1-2 1.2-2 3.2h2c0-1.4 2-1.7 2-3.2a3 3 0 00-3-3z"/></svg>
+      </button>
+      <a class="btn btn-icon" href="https://github.com/GoJian/awg_retina_tomography_ui" target="_blank" rel="noopener" title="View on GitHub" aria-label="GitHub">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 00-3.16 19.49c.5.09.68-.22.68-.48l-.01-1.7c-2.78.6-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.36 1.09 2.94.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.5 9.5 0 015 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85l-.01 2.74c0 .27.18.58.69.48A10 10 0 0012 2z"/></svg>
+      </a>
+    </div>
+  </header>
+
+  <div id="layout">
+    <!-- ===================== Sidebar ===================== -->
+    <aside id="sidebar">
+      <div class="sidebar-head">
+        <span class="sidebar-title">Layers</span>
+        <button id="sidebar-collapse" class="btn btn-icon" title="Collapse panel" aria-label="Collapse panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 7l-5 5 5 5z"/></svg>
+        </button>
+      </div>
+      <div id="layer-tree"></div>
+      <div class="sidebar-foot">
+        <button id="btn-clear-cache" class="link-btn" title="Remove locally cached meshes">Clear cached data</button>
+      </div>
+    </aside>
+
+    <button id="sidebar-restore" class="btn btn-icon" title="Show panel" aria-label="Show panel">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 7l5 5-5 5z"/></svg>
     </button>
-    <div id="header">
-      <div class="header-title">3D Viewer</div>
-      <div class="header-subtitle">Layer Controls</div>
-      <button id="sync-button" class="sync-button">Sync Views</button>
-    </div>
-    <div id="controls-container"></div>
+    <div id="sidebar-backdrop"></div>
+
+    <!-- ===================== Split stage ===================== -->
+    <main id="stage">
+      <section id="pane-glb" class="pane">
+        <div class="pane-label">Eye Anatomy</div>
+        <div class="pane-tools">
+          <button class="pane-reset btn btn-icon" title="Reset view" aria-label="Reset view">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 11-5 5H5a7 7 0 107-7z"/></svg>
+          </button>
+        </div>
+        <div id="glb-overlay" class="pane-overlay"></div>
+      </section>
+
+      <div id="divider" role="separator" aria-label="Resize panes"></div>
+
+      <section id="pane-stl" class="pane">
+        <div class="pane-label">Segmented Layers</div>
+        <div class="pane-tools">
+          <button class="pane-reset btn btn-icon" title="Reset view" aria-label="Reset view">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 11-5 5H5a7 7 0 107-7z"/></svg>
+          </button>
+        </div>
+        <div id="stl-empty" class="pane-empty">
+          <div class="empty-card">
+            <svg viewBox="0 0 24 24" class="empty-icon" aria-hidden="true"><path fill="currentColor" d="M3 5h18v2H3V5zm0 6h18v2H3v-2zm0 6h12v2H3v-2z"/></svg>
+            <div>Toggle a layer in the panel to display it here.</div>
+          </div>
+        </div>
+      </section>
+    </main>
   </div>
 
-  <button id="sidebar-restore" aria-label="Show sidebar">
-    <span class="toggle-arrow">▶</span>
-  </button>
+  <div id="toast-host" aria-live="polite"></div>
 
-  <!-- Split panes -->
-  <div id="split-wrap">
-    <div id="glb-pane" class="pane">
-      <div class="pane-label">GLB (Left)</div>
+  <!-- ===================== Help dialog ===================== -->
+  <dialog id="help-dialog">
+    <div class="dialog-card">
+      <button class="dialog-close btn btn-icon" aria-label="Close">✕</button>
+      <h2>Retina Tomography Viewer</h2>
+      <p>Two linked 3D views of GeneLab AWG retina micro-tomography data: the whole <strong>eye anatomy</strong> on the left and individually toggleable <strong>segmented tissue layers</strong> on the right.</p>
+      <h3>Controls</h3>
+      <ul>
+        <li><strong>Rotate</strong> — drag · <strong>Pan</strong> — right-drag · <strong>Zoom</strong> — scroll</li>
+        <li><strong>Sync</strong> — link rotation of both views</li>
+        <li><strong>Reset</strong> — re-frame a view, or both at once</li>
+        <li><strong>Layers</strong> — toggle visibility, recolour via the swatch, fade with the slider</li>
+      </ul>
+      <h3>About the data</h3>
+      <p>The source meshes are large scientific scans. Each downloads on demand, with a progress bar, and is cached in your browser so it only downloads once. Use <em>Clear cached data</em> to free that space.</p>
     </div>
-    <div id="divider"></div>
-    <div id="stl-pane" class="pane">
-      <div class="pane-label">STL Layers (Right)</div>
-    </div>
-  </div>
+  </dialog>
 
-  <div id="loading-indicator">Loading...</div>
-
-  <script type="module">
-    import * as THREE from 'https://esm.sh/three';
-    import { STLLoader } from 'https://esm.sh/three/examples/jsm/loaders/STLLoader.js';
-    import { GLTFLoader } from 'https://esm.sh/three/examples/jsm/loaders/GLTFLoader.js';
-    import { OrbitControls } from 'https://esm.sh/three/examples/jsm/controls/OrbitControls.js';
-    import { loadCSVData, samplesData } from './data-loader.js';
-
-    // ==================== DOM ====================
-    const sidebar = document.getElementById('sidebar');
-    const sidebarToggle = document.getElementById('sidebar-toggle');
-    const sidebarRestore = document.getElementById('sidebar-restore');
-    const splitWrap = document.getElementById('split-wrap');
-    const glbPane = document.getElementById('glb-pane');
-    const stlPane = document.getElementById('stl-pane');
-    const controlsContainer = document.getElementById('controls-container');
-    const loadingIndicator = document.getElementById('loading-indicator');
-    const syncButton = document.getElementById('sync-button');
-
-    function showLoading(text) {
-      loadingIndicator.style.display = 'block';
-      loadingIndicator.textContent = text || 'Loading...';
-      loadingIndicator.style.color = 'white';
-    }
-    function hideLoading() {
-      loadingIndicator.style.display = 'none';
-    }
-
-    // ==================== SIDEBAR TOGGLE ====================
-    let sidebarCollapsed = false;
-    function toggleSidebar() {
-      sidebarCollapsed = !sidebarCollapsed;
-
-      if (sidebarCollapsed) {
-        sidebar.style.transform = 'translateX(-320px)';
-        splitWrap.style.left = '0';
-        sidebarToggle.classList.add('hidden');
-        sidebarRestore.classList.add('visible');
-      } else {
-        sidebar.style.transform = 'translateX(0)';
-        splitWrap.style.left = '320px';
-        sidebarToggle.classList.remove('hidden');
-        sidebarRestore.classList.remove('visible');
-      }
-
-      requestAnimationFrame(() => { sizeGLB(); sizeSTL(); });
-      setTimeout(() => { sizeGLB(); sizeSTL(); }, 250);
-    }
-    sidebarToggle.addEventListener('click', toggleSidebar);
-    sidebarRestore.addEventListener('click', toggleSidebar);
-
-    // ==================== HELPERS ====================
-    function addDefaultLights(scene) {
-      scene.background = new THREE.Color(0x111111);
-      scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-
-      const hemi = new THREE.HemisphereLight(0xbec8ff, 0xffffff, 0.55);
-      scene.add(hemi);
-
-      const dir1 = new THREE.DirectionalLight(0xffffff, 0.9);
-      dir1.position.set(1, 1, 1);
-      scene.add(dir1);
-
-      const dir2 = new THREE.DirectionalLight(0xffffff, 0.5);
-      dir2.position.set(-1, -0.5, -1);
-      scene.add(dir2);
-    }
-
-    function fitCameraToObject(camera, controls, object, offset = 1.35, isSTL = false) {
-      const box = new THREE.Box3().setFromObject(object);
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const fov = camera.fov * (Math.PI / 180);
-      let cameraZ = Math.abs((maxDim / 2) / Math.tan(fov / 2));
-
-      cameraZ *= offset;
-
-      camera.near = Math.max(0.01, maxDim / 1000);
-      camera.far  = Math.max(2000, maxDim * 1000);
-      camera.updateProjectionMatrix();
-
-      camera.position.set(center.x, center.y, center.z + cameraZ);
-      controls.target.copy(center);
-      controls.update();
-
-      return cameraZ;
-    }
-
-    // ==================== GLB (LEFT) ====================
-    const glbScene = new THREE.Scene();
-    addDefaultLights(glbScene);
-
-    const glbCamera = new THREE.PerspectiveCamera(60, 1, 0.01, 1e7);
-    const glbRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    glbPane.appendChild(glbRenderer.domElement);
-
-    const glbControls = new OrbitControls(glbCamera, glbRenderer.domElement);
-    glbControls.enableDamping = true;
-    glbControls.dampingFactor = 0.05;
-    glbControls.enableZoom = true;
-    glbControls.enableRotate = true;
-    glbControls.enablePan = true;
-
-    function sizeGLB() {
-      const w = glbPane.clientWidth || 1;
-      const h = glbPane.clientHeight || 1;
-      glbRenderer.setSize(w, h, false);
-      glbCamera.aspect = w / h;
-      glbCamera.updateProjectionMatrix();
-    }
-
-    const gltfLoader = new GLTFLoader();
-    let glbModel = null;
-    let glbDefaultDist = 0;
-
-    // Hugging Face GLB URL
-    const GLB_URL =
-      'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main/eye-anatomy.glb';
-
-    // Robust loader: fetch -> parse (avoids some redirect/CORS edge cases)
-    async function loadGLBFromURL(url) {
-      showLoading('Loading GLB...');
-      try {
-        const res = await fetch(url, { mode: 'cors' });
-        if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-
-        const buffer = await res.arrayBuffer();
-
-        gltfLoader.parse(
-          buffer,
-          '',
-          (gltf) => {
-            if (glbModel) glbScene.remove(glbModel);
-            glbModel = gltf.scene;
-
-            glbModel.traverse((child) => {
-              if (child.isMesh) {
-                child.frustumCulled = false;
-                if (child.material) {
-                  child.material.side = THREE.DoubleSide;
-                  child.material.transparent = false;
-                  child.material.opacity = 1.0;
-                  child.material.needsUpdate = true;
-                }
-              }
-            });
-
-            glbScene.add(glbModel);
-            const cameraZ = fitCameraToObject(glbCamera, glbControls, glbModel, 1.4);
-            glbDefaultDist = glbControls.getDistance();
-
-            hideLoading();
-            console.log('✅ GLB loaded:', url);
-          },
-          (err) => {
-            console.error('❌ GLB parse error:', err);
-            showLoading('Error parsing GLB.');
-            loadingIndicator.style.color = 'red';
-          }
-        );
-      } catch (err) {
-        console.error('❌ GLB fetch error:', err);
-        showLoading('Error loading GLB (fetch failed).');
-        loadingIndicator.style.color = 'red';
-      }
-    }
-
-    // ==================== STL (RIGHT) ====================
-    const stlScene = new THREE.Scene();
-    addDefaultLights(stlScene);
-
-    const stlCamera = new THREE.PerspectiveCamera(60, 1, 0.01, 1e7);
-    const stlRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    stlPane.appendChild(stlRenderer.domElement);
-
-    const stlControls = new OrbitControls(stlCamera, stlRenderer.domElement);
-    stlControls.enableDamping = true;
-    stlControls.dampingFactor = 0.05;
-    stlControls.enableZoom = true;
-    stlControls.enableRotate = true;
-    stlControls.enablePan = true;
-
-    function sizeSTL() {
-      const w = stlPane.clientWidth || 1;
-      const h = stlPane.clientHeight || 1;
-      stlRenderer.setSize(w, h, false);
-      stlCamera.aspect = w / h;
-      stlCamera.updateProjectionMatrix();
-    }
-
-    const stlRoot = new THREE.Group();
-    stlScene.add(stlRoot);
-    let stlDefaultDist = 1500;
-
-    function fitSTLViewIfPossible() {
-      if (stlRoot.children.length === 0) return;
-      const cameraZ = fitCameraToObject(stlCamera, stlControls, stlRoot, 1.4, true);
-      stlDefaultDist = stlControls.getDistance();
-    }
-
-    const stlLoader = new STLLoader();
-    const featureMeshes = new Map();
-
-    function loadFeature(f, onDone) {
-      const progressContainer = document.getElementById(`progress-${f.id}`);
-      const progressBar = document.getElementById(`bar-${f.id}`);
-
-      if (progressContainer) progressContainer.style.display = 'block';
-      if (progressBar) progressBar.style.width = '10%';
-
-      stlLoader.load(
-        f.path,
-        (geometry) => {
-          if (progressBar) progressBar.style.width = '100%';
-          geometry.computeVertexNormals();
-
-          const mat = new THREE.MeshLambertMaterial({
-            color: f.color,
-            transparent: f.opacity < 1.0,
-            opacity: f.opacity,
-            side: THREE.FrontSide,
-            depthWrite: f.opacity >= 1.0,
-            depthTest: true
-          });
-
-          const mesh = new THREE.Mesh(geometry, mat);
-          mesh.renderOrder = f.opacity < 1.0 ? 999 : 0;
-
-          featureMeshes.set(f.id, mesh);
-          stlRoot.add(mesh);
-
-          fitSTLViewIfPossible();
-
-          setTimeout(() => {
-            if (progressContainer) progressContainer.style.display = 'none';
-            if (progressBar) progressBar.style.width = '0%';
-          }, 300);
-
-          onDone?.(mesh);
-        },
-        (xhr) => {
-          if (xhr.lengthComputable && progressBar) {
-            const pct = (xhr.loaded / xhr.total) * 100;
-            progressBar.style.width = Math.min(pct, 90) + '%';
-          } else if (progressBar) {
-            progressBar.style.width = '50%';
-          }
-        },
-        (e) => {
-          console.error(`❌ ${f.id} STL load error:`, e);
-          if (progressContainer) progressContainer.style.display = 'none';
-          if (progressBar) progressBar.style.width = '0%';
-          onDone?.(null);
-        }
-      );
-    }
-
-    // ==================== UI BUILDING ====================
-    function buildUI() {
-      controlsContainer.innerHTML = '';
-
-      for (const sample of samplesData.samples) {
-        const sampleWrapper = document.createElement('div');
-        sampleWrapper.className = 'sample-wrapper';
-
-        const sampleHeader = document.createElement('div');
-        sampleHeader.className = 'sample-header';
-
-        const arrow = document.createElement('span');
-        arrow.className = 'dropdown-arrow open';
-        arrow.textContent = '▶';
-
-        const sampleLabel = document.createElement('span');
-        sampleLabel.textContent = sample.label;
-
-        sampleHeader.appendChild(arrow);
-        sampleHeader.appendChild(sampleLabel);
-
-        const structuresContainer = document.createElement('div');
-        structuresContainer.className = 'structures-container open';
-
-        sampleHeader.onclick = () => {
-          const isOpen = arrow.classList.contains('open');
-          if (isOpen) {
-            arrow.classList.remove('open');
-            structuresContainer.classList.remove('open');
-          } else {
-            arrow.classList.add('open');
-            structuresContainer.classList.add('open');
-          }
-        };
-
-        for (const structure of sample.structures) {
-          const structureWrapper = document.createElement('div');
-          structureWrapper.className = 'structure-wrapper';
-
-          const structureRow = document.createElement('div');
-          structureRow.className = 'structure-row';
-
-          const cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.className = 'checkbox-custom';
-          cb.id = `toggle-${structure.id}`;
-          cb.dataset.featureId = structure.id;
-
-          const colorIndicator = document.createElement('span');
-          colorIndicator.className = 'color-indicator';
-          colorIndicator.style.background = `#${structure.color.toString(16).padStart(6, '0')}`;
-
-          const colorPicker = document.createElement('input');
-          colorPicker.type = 'color';
-          colorPicker.className = 'color-picker-input';
-          colorPicker.value = `#${structure.color.toString(16).padStart(6, '0')}`;
-          colorPicker.dataset.featureId = structure.id;
-
-          colorIndicator.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            colorPicker.click();
-          };
-
-          colorPicker.onchange = (e) => {
-            const newColor = e.target.value;
-            colorIndicator.style.background = newColor;
-
-            const mesh = featureMeshes.get(structure.id);
-            if (mesh) mesh.material.color.setStyle(newColor);
-
-            structure.color = parseInt(newColor.replace('#', ''), 16);
-          };
-
-          const text = document.createElement('span');
-          text.className = 'structure-label';
-          text.textContent = structure.label;
-
-          const opacityContainer = document.createElement('div');
-          opacityContainer.className = 'opacity-container';
-
-          const opacitySlider = document.createElement('input');
-          opacitySlider.type = 'range';
-          opacitySlider.className = 'opacity-slider';
-          opacitySlider.min = '0';
-          opacitySlider.max = '100';
-          opacitySlider.value = structure.opacity * 100;
-          opacitySlider.dataset.featureId = structure.id;
-
-          const opacityLabel = document.createElement('span');
-          opacityLabel.className = 'opacity-label';
-          opacityLabel.textContent = Math.round(structure.opacity * 100) + '%';
-
-          opacitySlider.oninput = (e) => {
-            e.stopPropagation();
-            const newOpacity = parseFloat(e.target.value) / 100;
-            opacityLabel.textContent = Math.round(newOpacity * 100) + '%';
-
-            const mesh = featureMeshes.get(structure.id);
-            if (mesh) {
-              mesh.material.opacity = newOpacity;
-              mesh.material.transparent = newOpacity < 1.0;
-              mesh.material.depthWrite = newOpacity >= 1.0;
-              mesh.renderOrder = newOpacity < 1.0 ? 999 : 0;
-              mesh.material.needsUpdate = true;
-            }
-
-            structure.opacity = newOpacity;
-          };
-
-          opacityContainer.appendChild(opacitySlider);
-          opacityContainer.appendChild(opacityLabel);
-
-          structureRow.appendChild(cb);
-          structureRow.appendChild(colorIndicator);
-          structureRow.appendChild(colorPicker);
-          structureRow.appendChild(text);
-          structureRow.appendChild(opacityContainer);
-
-          const progressContainer = document.createElement('div');
-          progressContainer.className = 'progress-container';
-          progressContainer.id = `progress-${structure.id}`;
-
-          const progressBar = document.createElement('div');
-          progressBar.className = 'progress-bar';
-          progressBar.id = `bar-${structure.id}`;
-
-          progressContainer.appendChild(progressBar);
-
-          structureWrapper.appendChild(structureRow);
-          structureWrapper.appendChild(progressContainer);
-          structuresContainer.appendChild(structureWrapper);
-        }
-
-        sampleWrapper.appendChild(sampleHeader);
-        sampleWrapper.appendChild(structuresContainer);
-        controlsContainer.appendChild(sampleWrapper);
-      }
-    }
-
-    // Checkbox toggles (STL side)
-    controlsContainer.addEventListener('change', (e) => {
-      const target = e.target;
-      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
-
-      const id = target.dataset.featureId;
-
-      let structure = null;
-      for (const sample of samplesData.samples) {
-        structure = sample.structures.find((s) => s.id === id);
-        if (structure) break;
-      }
-      if (!structure) return;
-
-      const existing = featureMeshes.get(id);
-      if (target.checked) {
-        if (existing) {
-          existing.visible = true;
-          fitSTLViewIfPossible();
-        } else {
-          loadFeature(structure);
-        }
-      } else {
-        if (existing) existing.visible = false;
-        fitSTLViewIfPossible();
-      }
-    });
-
-    // ==================== SYNC LOGIC ====================
-    let syncEnabled = false;
-    let isSyncing = false;
-
-    function syncCameras(fromControls, toControls, fromDefault, toDefault) {
-      if (isSyncing) return;
-      isSyncing = true;
-
-      const dir = fromControls.object.position.clone().sub(fromControls.target).normalize();
-      const dist = fromControls.getDistance() * (toDefault / fromDefault || 1);
-      toControls.object.position.copy(toControls.target).add(dir.clone().multiplyScalar(dist));
-      toControls.object.lookAt(toControls.target);
-      toControls.update();
-
-      isSyncing = false;
-    }
-
-    const glbChangeListener = () => syncCameras(glbControls, stlControls, glbDefaultDist, stlDefaultDist);
-    const stlChangeListener = () => syncCameras(stlControls, glbControls, stlDefaultDist, glbDefaultDist);
-
-    syncButton.addEventListener('click', () => {
-      syncEnabled = !syncEnabled;
-      syncButton.textContent = syncEnabled ? 'Unsync Views' : 'Sync Views';
-
-      if (syncEnabled) {
-        glbControls.addEventListener('change', glbChangeListener);
-        stlControls.addEventListener('change', stlChangeListener);
-        // Initial sync from STL to GLB to keep STL position unchanged
-        syncCameras(stlControls, glbControls, stlDefaultDist, glbDefaultDist);
-      } else {
-        glbControls.removeEventListener('change', glbChangeListener);
-        stlControls.removeEventListener('change', stlChangeListener);
-      }
-    });
-
-    // ==================== RENDER LOOP ====================
-    function animate() {
-      requestAnimationFrame(animate);
-
-      glbControls.update();
-      stlControls.update();
-
-      glbRenderer.render(glbScene, glbCamera);
-      stlRenderer.render(stlScene, stlCamera);
-    }
-
-    // ==================== INIT ====================
-    async function init() {
-      sizeGLB();
-      sizeSTL();
-      window.addEventListener('resize', () => { sizeGLB(); sizeSTL(); });
-
-      // Load GLB (left) from Hugging Face
-      loadGLBFromURL(GLB_URL);
-
-      // Load CSV + build UI (right)
-      showLoading('Loading CSV data...');
-      await loadCSVData();
-      buildUI();
-      hideLoading();
-
-      // Default STL camera start
-      stlCamera.position.set(0, 0, 1500);
-      stlControls.target.set(0, 0, 0);
-      stlControls.update();
-
-      animate();
-    }
-
-    init();
-  </script>
+  <script type="module" src="./viewer.js"></script>
 </body>
 </html>

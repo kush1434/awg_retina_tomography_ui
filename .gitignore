@@ -1,0 +1,11 @@
+# OS / editor
+.DS_Store
+*.swp
+
+# Local tooling
+.claude/
+node_modules/
+
+# Optimization working files (large source meshes & intermediates)
+tools/optimize/original/
+tools/optimize/out/
