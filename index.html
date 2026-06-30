@@ -3,13 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="description" content="Interactive 3D viewer for GeneLab AWG retina micro-tomography — compare eye anatomy with segmented tissue layers." />
+  <meta name="description" content="Retina Tomography Viewer — a dark, clinical 3D workbench for GeneLab AWG retina micro-tomography: eye anatomy and segmented tissue layers with tri-planar slicing." />
   <meta name="color-scheme" content="dark" />
-  <title>Retina Tomography Viewer</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='11' fill='%230a0e14'/%3E%3Ccircle cx='12' cy='12' r='6.5' fill='none' stroke='%2338bdf8' stroke-width='1.6'/%3E%3Ccircle cx='12' cy='12' r='2.4' fill='%2338bdf8'/%3E%3C/svg%3E" />
+  <title>Retina Tomography Workbench</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%2306140e'/%3E%3Ccircle cx='12' cy='12' r='6.5' fill='none' stroke='%2334d399' stroke-width='1.7'/%3E%3Ccircle cx='12' cy='12' r='2.4' fill='%2334d399'/%3E%3C/svg%3E" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Material+Symbols+Outlined&display=swap" />
   <link rel="stylesheet" href="styles.css" />
 
-  <!-- Pin Three.js (stable) and map bare specifiers used across modules. -->
   <script type="importmap">
   {
     "imports": {
@@ -20,108 +23,176 @@
   </script>
 </head>
 <body>
+<div id="app">
   <!-- ===================== Top bar ===================== -->
-  <header id="appbar">
+  <header id="topbar">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/>
-        <circle cx="12" cy="12" r="3.4" fill="currentColor"/>
-      </svg>
-      <div class="brand-text">
-        <span class="brand-title">Retina Tomography Viewer</span>
-        <span class="brand-sub">GeneLab · Analysis Working Group</span>
+      <div class="logo-mark"><span class="ms">neurology</span></div>
+      <div class="wordmark">
+        <span class="brand-name">Retina Workbench</span>
+        <span class="brand-eyebrow">GENELAB · AWG TOMOGRAPHY</span>
       </div>
     </div>
 
-    <div class="appbar-actions">
-      <button id="btn-sync" class="btn btn-toggle" aria-pressed="false" title="Link rotation of both views">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 7h7l-2-2 1.4-1.4L18 8l-4.6 4.4L12 11l2-2H7a3 3 0 00-3 3H2a5 5 0 015-5zm10 10h-7l2 2-1.4 1.4L6 16l4.6-4.4L12 13l-2 2h7a3 3 0 003-3h2a5 5 0 01-5 5z"/></svg>
-        <span>Sync</span>
-      </button>
-      <button id="btn-reset" class="btn" title="Reset both views">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 11-5 5H5a7 7 0 107-7z"/></svg>
-        <span>Reset</span>
-      </button>
-      <button id="btn-help" class="btn btn-icon" title="Help" aria-label="Help">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 18h2v-2h-2v2zm1-16a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm0-13a3 3 0 00-3 3h2a1 1 0 112 0c0 1-2 1.2-2 3.2h2c0-1.4 2-1.7 2-3.2a3 3 0 00-3-3z"/></svg>
-      </button>
-      <a class="btn btn-icon" href="https://github.com/GoJian/awg_retina_tomography_ui" target="_blank" rel="noopener" title="View on GitHub" aria-label="GitHub">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 00-3.16 19.49c.5.09.68-.22.68-.48l-.01-1.7c-2.78.6-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.36 1.09 2.94.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.5 9.5 0 015 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85l-.01 2.74c0 .27.18.58.69.48A10 10 0 0012 2z"/></svg>
-      </a>
+    <span class="bar-div"></span>
+
+    <button id="study-selector" class="pill" title="Study">
+      <span class="ms">folder_open</span>
+      <span class="mono" id="study-label">SAMPLE 1 · µCT · SEG</span>
+      <span class="ms">expand_more</span>
+    </button>
+
+    <div class="live-status">
+      <span class="live-dot"></span>
+      <span class="mono" id="live-label">— LAYERS</span>
     </div>
+
+    <div class="topbar-spacer"></div>
+
+    <button id="btn-reset" class="icon-btn" title="Reset views"><span class="ms">restart_alt</span></button>
+    <button id="btn-fit" class="icon-btn" title="Fit views"><span class="ms">fit_screen</span></button>
+    <button id="btn-sync" class="icon-btn" aria-pressed="false" title="Sync rotation of both views"><span class="ms">sync</span></button>
+    <button id="btn-help" class="icon-btn" title="Help"><span class="ms">help</span></button>
+    <a class="icon-btn" href="https://github.com/GoJian/awg_retina_tomography_ui" target="_blank" rel="noopener" title="GitHub"><span class="ms">code</span></a>
+    <span class="bar-div"></span>
+    <div class="avatar">K</div>
   </header>
 
-  <div id="layout">
-    <!-- ===================== Sidebar ===================== -->
-    <aside id="sidebar">
-      <div class="sidebar-head">
-        <span class="sidebar-title">Layers</span>
-        <button id="sidebar-collapse" class="btn btn-icon" title="Collapse panel" aria-label="Collapse panel">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 7l-5 5 5 5z"/></svg>
-        </button>
-      </div>
-      <div id="layer-tree"></div>
-      <div class="sidebar-foot">
-        <button id="btn-clear-cache" class="link-btn" title="Remove locally cached meshes">Clear cached data</button>
-      </div>
+  <!-- ===================== Work area ===================== -->
+  <div id="work">
+    <!-- ---------- Left rail ---------- -->
+    <aside id="rail-left" class="rail">
+      <section class="rail-sec">
+        <div class="sec-head"><span>SERIES</span><span class="chip">µCT</span></div>
+        <div class="meta-grid">
+          <span class="meta-k">Modality</span><span class="meta-v mono">Micro-CT</span>
+          <span class="meta-k">Sample</span><span class="meta-v mono" id="meta-sample">Sample 1</span>
+          <span class="meta-k">Layers</span><span class="meta-v mono" id="meta-layers">—</span>
+          <span class="meta-k">Source</span><span class="meta-v mono"><a id="meta-source" href="https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui" target="_blank" rel="noopener">Hugging Face ↗</a></span>
+        </div>
+      </section>
+
+      <section class="rail-sec rail-grow">
+        <div class="sec-head"><span>LAYERS</span><span class="chip-count" id="layer-count">0</span></div>
+        <div id="layer-tree"></div>
+      </section>
+
+      <section class="rail-sec">
+        <button id="btn-clear-cache" class="link-btn">Clear cached data</button>
+      </section>
     </aside>
 
-    <button id="sidebar-restore" class="btn btn-icon" title="Show panel" aria-label="Show panel">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 7l5 5-5 5z"/></svg>
-    </button>
-    <div id="sidebar-backdrop"></div>
-
-    <!-- ===================== Split stage ===================== -->
-    <main id="stage">
-      <section id="pane-glb" class="pane">
+    <!-- ---------- Viewport (two linked panes) ---------- -->
+    <main id="viewport">
+      <section id="pane-glb" class="pane" data-orient="S I R L">
         <div class="pane-label">Eye Anatomy</div>
-        <div class="pane-tools">
-          <button class="pane-reset btn btn-icon" title="Reset view" aria-label="Reset view">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 11-5 5H5a7 7 0 107-7z"/></svg>
-          </button>
-        </div>
         <div id="glb-overlay" class="pane-overlay"></div>
       </section>
 
       <div id="divider" role="separator" aria-label="Resize panes"></div>
 
-      <section id="pane-stl" class="pane">
+      <section id="pane-stl" class="pane" data-orient="S I R L">
         <div class="pane-label">Segmented Layers</div>
-        <div class="pane-tools">
-          <button class="pane-reset btn btn-icon" title="Reset view" aria-label="Reset view">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 11-5 5H5a7 7 0 107-7z"/></svg>
-          </button>
-        </div>
         <div id="stl-empty" class="pane-empty">
           <div class="empty-card">
-            <svg viewBox="0 0 24 24" class="empty-icon" aria-hidden="true"><path fill="currentColor" d="M3 5h18v2H3V5zm0 6h18v2H3v-2zm0 6h12v2H3v-2z"/></svg>
-            <div>Toggle a layer in the panel to display it here.</div>
+            <span class="ms empty-icon">stacks</span>
+            <div>Toggle a layer to display it here.</div>
           </div>
         </div>
       </section>
     </main>
+
+    <!-- ---------- Right rail ---------- -->
+    <aside id="rail-right" class="rail">
+      <section class="rail-sec">
+        <div class="sec-head"><span>RENDERING</span></div>
+        <div class="seg" id="render-mode" role="tablist">
+          <button class="seg-btn active" data-mode="surface" role="tab"><span class="ms">deployed_code</span><span>Surface</span></button>
+          <button class="seg-btn" data-mode="wireframe" role="tab"><span class="ms">grid_3x3</span><span>Wireframe</span></button>
+          <button class="seg-btn" data-mode="slices" role="tab"><span class="ms">stacks</span><span>Slices</span></button>
+        </div>
+        <div class="seg-desc mono" id="mode-desc">Shaded surface · solid meshes</div>
+      </section>
+
+      <section class="rail-sec" id="slice-sec" hidden>
+        <div class="sec-head"><span>SLICE PLANES</span><span class="chip">MPR</span></div>
+        <div class="slice-row" data-axis="x" style="--pc:#7bd88f">
+          <label class="slice-toggle"><input type="checkbox" data-axis="x" /><span class="dot"></span>Sagittal</label>
+          <input type="range" class="slider" data-axis="x" min="0" max="100" value="50" />
+          <span class="mono slice-val" data-axis="x">50%</span>
+        </div>
+        <div class="slice-row" data-axis="y" style="--pc:#ebb46e">
+          <label class="slice-toggle"><input type="checkbox" data-axis="y" /><span class="dot"></span>Axial</label>
+          <input type="range" class="slider" data-axis="y" min="0" max="100" value="50" />
+          <span class="mono slice-val" data-axis="y">50%</span>
+        </div>
+        <div class="slice-row" data-axis="z" style="--pc:#78aaeb">
+          <label class="slice-toggle"><input type="checkbox" data-axis="z" /><span class="dot"></span>Coronal</label>
+          <input type="range" class="slider" data-axis="z" min="0" max="100" value="50" />
+          <span class="mono slice-val" data-axis="z">50%</span>
+        </div>
+        <label class="inline-toggle">
+          <span>Flip cut direction</span>
+          <span class="switch"><input type="checkbox" id="slice-flip" /><span class="knob"></span></span>
+        </label>
+        <label class="inline-toggle">
+          <span>Show cut planes</span>
+          <span class="switch"><input type="checkbox" id="slice-show" checked /><span class="knob"></span></span>
+        </label>
+      </section>
+
+      <section class="rail-sec">
+        <div class="sec-head"><span>DISPLAY</span></div>
+        <div class="ctl-row">
+          <span class="ctl-k">Layer opacity</span>
+          <span class="mono ctl-v" id="opacity-val">100%</span>
+        </div>
+        <input type="range" class="slider" id="global-opacity" min="0" max="100" value="100" />
+        <label class="inline-toggle">
+          <span>Auto-rotate</span>
+          <span class="switch"><input type="checkbox" id="auto-rotate" /><span class="knob"></span></span>
+        </label>
+        <label class="inline-toggle">
+          <span>Grid floor</span>
+          <span class="switch"><input type="checkbox" id="show-grid" /><span class="knob"></span></span>
+        </label>
+      </section>
+    </aside>
   </div>
 
-  <div id="toast-host" aria-live="polite"></div>
+  <!-- ===================== Status bar ===================== -->
+  <footer id="statusbar">
+    <span class="mono stat" id="stat-cam">az 0°&nbsp;&nbsp;el 0°</span>
+    <span class="bar-div"></span>
+    <span class="mono stat" id="stat-mode">surface</span>
+    <span class="status-spacer"></span>
+    <span class="mono stat" id="stat-tris">0 triangles</span>
+    <span class="bar-div"></span>
+    <span class="mono stat" id="stat-fps">— fps</span>
+  </footer>
+</div>
 
-  <!-- ===================== Help dialog ===================== -->
-  <dialog id="help-dialog">
-    <div class="dialog-card">
-      <button class="dialog-close btn btn-icon" aria-label="Close">✕</button>
-      <h2>Retina Tomography Viewer</h2>
-      <p>Two linked 3D views of GeneLab AWG retina micro-tomography data: the whole <strong>eye anatomy</strong> on the left and individually toggleable <strong>segmented tissue layers</strong> on the right.</p>
-      <h3>Controls</h3>
-      <ul>
-        <li><strong>Rotate</strong> — drag · <strong>Pan</strong> — right-drag · <strong>Zoom</strong> — scroll</li>
-        <li><strong>Sync</strong> — link rotation of both views</li>
-        <li><strong>Reset</strong> — re-frame a view, or both at once</li>
-        <li><strong>Layers</strong> — toggle visibility, recolour via the swatch, fade with the slider</li>
-      </ul>
-      <h3>About the data</h3>
-      <p>The source meshes are large scientific scans. Each downloads on demand, with a progress bar, and is cached in your browser so it only downloads once. Use <em>Clear cached data</em> to free that space.</p>
-    </div>
-  </dialog>
+<button id="rail-left-restore" class="edge-restore left" title="Show panel"><span class="ms">chevron_right</span></button>
+<div id="toast-host" aria-live="polite"></div>
 
-  <script type="module" src="./viewer.js"></script>
+<!-- ===================== Help dialog ===================== -->
+<dialog id="help-dialog">
+  <div class="dialog-card">
+    <button class="dialog-close icon-btn" aria-label="Close"><span class="ms">close</span></button>
+    <h2>Retina Tomography Workbench</h2>
+    <p>Two linked 3D views of GeneLab AWG retina micro-tomography: the whole <strong>eye anatomy</strong> on the left and toggleable <strong>segmented tissue layers</strong> on the right.</p>
+    <h3>Controls</h3>
+    <ul>
+      <li><strong>Rotate</strong> drag · <strong>Pan</strong> right-drag · <strong>Zoom</strong> scroll</li>
+      <li><strong>Sync</strong> links rotation of both views</li>
+      <li><strong>Rendering</strong> switches Surface / Wireframe / Slices</li>
+      <li><strong>Slices</strong> cuts the meshes with three orthogonal planes (tri-planar MPR) to reveal interior structure</li>
+    </ul>
+    <h3>Data</h3>
+    <p>Heavy source scans are decimated and Draco-compressed, cached in your browser, and stream with a progress bar. The Hugging Face dataset is unchanged.</p>
+  </div>
+</dialog>
+
+<script type="module" src="./viewer.js"></script>
 </body>
 </html>
