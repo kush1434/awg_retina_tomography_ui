@@ -96,6 +96,24 @@ body.no-right #work { grid-template-columns: var(--rail-l) 1fr 0; }
 .pill .ms { font-size: 16px; }
 .pill .mono { font-size: 11px; color: var(--mono-v); letter-spacing: .03em; }
 
+/* Study selector dropdown */
+#study-menu {
+  position: fixed; z-index: 60; display: none; min-width: 210px;
+  padding: 5px; border-radius: 10px;
+  background: var(--rail); border: 1px solid var(--line-strong);
+  box-shadow: 0 12px 34px -14px rgba(0,0,0,.85);
+}
+#study-menu.open { display: block; }
+.study-item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 8px 10px; border-radius: 7px; cursor: pointer; font-family: inherit;
+  background: none; border: none; color: var(--t-body); text-align: left;
+}
+.study-item:hover { background: rgba(255,255,255,.05); }
+.study-item .ms { font-size: 16px; color: var(--t-2); }
+.study-item-name { flex: 1; font-size: 13px; }
+.study-item-meta { font-size: 10.5px; color: var(--t-muted); }
+
 .live-status { display: flex; align-items: center; gap: 7px; }
 .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ac); box-shadow: 0 0 8px 1px color-mix(in oklab, var(--ac) 70%, transparent); }
 .live-status .mono { font-size: 10.5px; color: var(--t-muted); letter-spacing: .04em; }

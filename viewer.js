@@ -613,6 +613,7 @@ function buildLayerTree() {
   for (const sample of samplesData.samples) {
     const group = document.createElement('div');
     group.className = 'sample';
+    group.dataset.sampleId = sample.id;
     if (sample.demo) group.classList.add('is-demo');
 
     const headRow = document.createElement('div');
@@ -768,6 +769,47 @@ function refreshStlEmpty() {
 }
 
 // ---------------------------------------------------------------------------
+//  Study selector (top bar) — pick & frame a sample
+// ---------------------------------------------------------------------------
+function focusSample(sampleId) {
+  const sample = findSample(sampleId);
+  if (sample) $('#study-label').textContent = `${sample.label.toUpperCase()} · µCT · SEG`;
+
+  const g = sampleGroups.get(sampleId);
+  if (g && g.children.length) {
+    const box = new THREE.Box3().setFromObject(g);
+    if (!box.isEmpty()) { fitBox(stl, box, 1.6); updateBounds(stl); }
+  }
+  // Reveal the sample in the left rail.
+  const el = layerTree.querySelector(`[data-sample-id="${sampleId}"]`);
+  el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function buildStudyMenu() {
+  const menu = $('#study-menu');
+  menu.innerHTML = '';
+  for (const sample of samplesData.samples) {
+    const n = sample.structures.length;
+    const item = document.createElement('button');
+    item.className = 'study-item'; item.setAttribute('role', 'menuitem');
+    item.innerHTML = `<span class="ms">${sample.demo ? 'content_copy' : 'folder_open'}</span>
+      <span class="study-item-name">${sample.label}</span>
+      <span class="study-item-meta mono">${n} layer${n === 1 ? '' : 's'}</span>`;
+    item.addEventListener('click', () => { focusSample(sample.id); closeStudyMenu(); });
+    menu.appendChild(item);
+  }
+}
+
+function openStudyMenu() {
+  const menu = $('#study-menu');
+  const r = $('#study-selector').getBoundingClientRect();
+  menu.style.left = `${r.left}px`;
+  menu.style.top = `${r.bottom + 6}px`;
+  menu.classList.add('open');
+}
+function closeStudyMenu() { $('#study-menu').classList.remove('open'); }
+
+// ---------------------------------------------------------------------------
 //  Toasts + confirm
 // ---------------------------------------------------------------------------
 function toast(message, type = 'info', ms = 6000) {
@@ -848,6 +890,15 @@ function wireControls() {
   btnSync.addEventListener('click', () => setSync(!syncEnabled));
   $('#btn-reset').addEventListener('click', resetAll);
   $('#btn-fit').addEventListener('click', resetAll);
+
+  // Study selector dropdown
+  $('#study-selector').addEventListener('click', (e) => {
+    e.stopPropagation();
+    $('#study-menu').classList.contains('open') ? closeStudyMenu() : openStudyMenu();
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#study-menu') && !e.target.closest('#study-selector')) closeStudyMenu();
+  });
 
   const help = $('#help-dialog');
   $('#btn-help').addEventListener('click', () => help.showModal());
@@ -987,6 +1038,7 @@ async function init() {
   try {
     await loadCSVData();
     buildLayerTree();
+    buildStudyMenu();
     probeSizes(annotateSize);
   } catch (err) {
     console.error(err);
