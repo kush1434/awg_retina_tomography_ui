@@ -46,6 +46,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 #work {
   display: grid;
   grid-template-columns: var(--rail-l) 1fr var(--rail-r);
+  grid-template-rows: minmax(0, 1fr);   /* pin the row height so tall rails scroll instead of stretching the viewport */
   min-height: 0;
 }
 body.no-left  #work { grid-template-columns: 0 1fr var(--rail-r); }
@@ -125,13 +126,33 @@ body.no-right #work { grid-template-columns: var(--rail-l) 1fr 0; }
 
 /* ----------------------------- Layer tree -------------------------------- */
 .sample { margin-bottom: 2px; }
+.sample-head-row { display: flex; align-items: center; gap: 4px; padding-right: 6px; }
 .sample-head {
-  display: flex; align-items: center; gap: 8px; width: 100%;
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
   padding: 7px 9px; background: none; border: none; cursor: pointer;
   color: var(--t-body); font-size: 12.5px; font-weight: 600; text-align: left;
   font-family: inherit;
 }
 .sample-head:hover { background: rgba(255,255,255,.045); border-radius: 6px; }
+.is-demo .sample-name { color: var(--t-2); }
+.is-demo .sample-name::after { content: ' ◇'; color: var(--ac); font-size: 9px; }
+
+.sample-vis {
+  appearance: none; -webkit-appearance: none; width: 15px; height: 15px; flex-shrink: 0;
+  border: 1.5px solid var(--line-strong); border-radius: 4px; background: var(--inset-2);
+  cursor: pointer; position: relative;
+}
+.sample-vis:checked { background: var(--ac); border-color: var(--ac); }
+.sample-vis:checked::after { content: ''; position: absolute; left: 4px; top: 1px; width: 3.5px; height: 7px; border: solid #06140e; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.sample-gear { width: 26px; height: 26px; }
+.sample-gear .ms { font-size: 16px; }
+.sample-gear.active { color: var(--ac); background: color-mix(in oklab, var(--ac) 13%, transparent); }
+
+.sample-ctl { padding: 6px 10px 10px; margin: 0 6px 4px; background: var(--inset); border-radius: 8px; }
+.demo-badge { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ac); margin-bottom: 8px; }
+.ctl-line { display: grid; grid-template-columns: 70px 1fr; align-items: center; gap: 8px; }
+.ctl-line > span { font-size: 11px; color: var(--t-label); }
+.ctl-line .slider { margin: 6px 0; }
 .sample-head .caret { color: var(--t-muted); font-size: 10px; transition: transform .2s; }
 .sample-head.open .caret { transform: rotate(90deg); }
 .sample-name { flex: 1; }
@@ -187,6 +208,8 @@ body.no-right #work { grid-template-columns: var(--rail-l) 1fr 0; }
 
 /* ----------------------------- Segmented control ------------------------- */
 .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.seg.seg-2 { grid-template-columns: repeat(2, 1fr); }
+#overlay-ctl { margin-top: 12px; }
 .seg-btn {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 9px 4px; border-radius: 7px; cursor: pointer; font-family: inherit;
@@ -223,9 +246,9 @@ body.no-right #work { grid-template-columns: var(--rail-l) 1fr 0; }
 .ctl-v { font-size: 11px; color: var(--mono-v); }
 
 /* ----------------------------- Viewport ---------------------------------- */
-#viewport { display: flex; min-width: 0; position: relative; background: #07090c; }
+#viewport { display: flex; min-width: 0; min-height: 0; position: relative; background: #07090c; }
 .pane {
-  position: relative; flex: 1 1 50%; min-width: 0; overflow: hidden;
+  position: relative; flex: 1 1 50%; min-width: 0; min-height: 0; overflow: hidden;
   background: radial-gradient(125% 120% at 50% 36%, #0f141b, #0a0d12 56%, #06090c);
 }
 .pane canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
@@ -267,6 +290,9 @@ body.no-right #work { grid-template-columns: var(--rail-l) 1fr 0; }
 /* HUD: scale bar */
 .hud-scale { position: absolute; bottom: 12px; left: 12px; z-index: 4; pointer-events: none; color: rgba(231,235,240,.46); font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; }
 .hud-scale .bar { height: 5px; border-left: 1px solid rgba(231,235,240,.4); border-right: 1px solid rgba(231,235,240,.4); border-bottom: 1px solid rgba(231,235,240,.4); margin-bottom: 3px; }
+
+/* Overlay layout: the STL pane becomes the single combined viewport. */
+body.overlay-layout #pane-glb, body.overlay-layout #divider { display: none; }
 
 #divider { flex: 0 0 5px; align-self: stretch; background: var(--line); cursor: col-resize; position: relative; z-index: 7; transition: background .15s; }
 #divider::after { content: ''; position: absolute; inset: 0 -4px; }

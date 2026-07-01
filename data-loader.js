@@ -95,12 +95,15 @@ export async function loadCSVData(csvUrl) {
         id: sampleName.toLowerCase().replace(/\s+/g, '_'),
         label: sampleName,
         link: iSampleLink >= 0 ? v[iSampleLink] : '',
+        offset: { x: 0, y: 0, z: 0 },   // per-sample position in the overlay workspace
+        opacity: 1,                     // whole-sample opacity multiplier
         structures: [],
       });
     }
     const sample = byName.get(sampleName);
     sample.structures.push({
       id: `${sample.id}__${fileName}`,
+      sampleId: sample.id,
       label: (iLabel >= 0 && v[iLabel]) ? v[iLabel] : fileName,
       path: link,
       kind: fileKind(link),
@@ -113,7 +116,42 @@ export async function loadCSVData(csvUrl) {
   }
 
   samplesData.samples = [...byName.values()];
+  if (new URLSearchParams(location.search).get('demo') !== 'off') addDemoSample();
   return samplesData;
+}
+
+// A palette used to re-colour demo samples so they stand out when overlaid.
+const DEMO_PALETTES = [
+  [0xff6ec7, 0xffd166, 0x9b8cff, 0x4dd0e1],
+  [0xff8a5c, 0x6ee7a8, 0xf25c8a, 0x8ecbff],
+];
+
+/**
+ * Append a synthetic duplicate of the first sample so multi-sample overlay is
+ * demonstrable while the dataset has only one real sample. Reuses the same
+ * (cached) meshes, re-coloured and offset. Disable with ?demo=off.
+ */
+function addDemoSample() {
+  const base = samplesData.samples[0];
+  if (!base || samplesData.samples.length > 1) return;
+  const pal = DEMO_PALETTES[0];
+  const demo = {
+    id: `${base.id}_demo`,
+    label: `${base.label} · copy`,
+    link: base.link,
+    demo: true,
+    offset: { x: 0.4, y: 0, z: 0 },   // sits beside the original by default
+    opacity: 1,
+    structures: base.structures.map((s, i) => ({
+      ...s,
+      id: `${s.id}_demo`,
+      sampleId: `${base.id}_demo`,
+      color: pal[i % pal.length],
+      _resolved: false,
+      _resolving: null,
+    })),
+  };
+  samplesData.samples.push(demo);
 }
 
 /**

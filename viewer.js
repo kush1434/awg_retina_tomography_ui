@@ -41,8 +41,10 @@ const btnSync = $('#btn-sync');
 //  Global view state
 // ---------------------------------------------------------------------------
 let renderMode = 'surface';                         // surface | wireframe | slices
+let layout = 'split';                               // split | overlay
 let globalOpacity = 1;
 let autoRotate = false;
+const OVERLAY_TARGET = 100;                          // groups are normalised to this size
 const clipState = {
   x: { on: false, pos: 0.5 },
   y: { on: false, pos: 0.5 },
@@ -133,11 +135,97 @@ const glb = createPane(glbPane);
 const stl = createPane(stlPane);
 const panes = [glb, stl];
 
+// The STL pane is the "overlay workspace": every sample is a normalised group
+// under stl.root, so samples stack on top of each other. In overlay layout the
+// eye anatomy is merged in as another group.
+const sampleGroups = new Map();     // sampleId -> THREE.Group
+const anatomyGroup = new THREE.Group();
+let anatomyObject = null;
+let stlFitted = false;
+const anatomyOffset = { x: 0, y: 0, z: 0 };
+let anatomyOpacity = 1;
+
+function getSampleGroup(sampleId) {
+  let g = sampleGroups.get(sampleId);
+  if (!g) { g = new THREE.Group(); g.userData.sampleId = sampleId; stl.root.add(g); sampleGroups.set(sampleId, g); }
+  return g;
+}
+
+// Bounding box of a node's *content*, ignoring the node's own transform.
+function localBox(node) {
+  const p = node.position.clone(), s = node.scale.clone(), q = node.quaternion.clone();
+  node.position.set(0, 0, 0); node.scale.set(1, 1, 1); node.quaternion.identity();
+  node.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(node);
+  node.position.copy(p); node.scale.copy(s); node.quaternion.copy(q);
+  node.updateMatrixWorld(true);
+  return box;
+}
+
+// Normalise a group to OVERLAY_TARGET, centre it at the origin, then apply the
+// group's offset (a fraction of the target size) so it can be stacked/separated.
+function normalizeGroupNode(node, offset = { x: 0, y: 0, z: 0 }) {
+  const box = localBox(node);
+  if (box.isEmpty()) return;
+  const c = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const s = OVERLAY_TARGET / (Math.max(size.x, size.y, size.z) || 1);
+  node.scale.setScalar(s);
+  node.position.set(
+    offset.x * OVERLAY_TARGET - s * c.x,
+    offset.y * OVERLAY_TARGET - s * c.y,
+    offset.z * OVERLAY_TARGET - s * c.z
+  );
+}
+
+function normalizeSample(sampleId) {
+  const g = sampleGroups.get(sampleId);
+  const sample = findSample(sampleId);
+  if (g && sample) normalizeGroupNode(g, sample.offset);
+}
+
+// Route the anatomy model to the correct place for the current layout:
+// its own left pane (split) or merged into the overlay workspace (overlay).
+function placeAnatomy() {
+  if (!anatomyObject) return;
+  anatomyObject.parent?.remove(anatomyObject);
+  if (layout === 'overlay') {
+    anatomyGroup.add(anatomyObject);
+    if (!anatomyGroup.parent) stl.root.add(anatomyGroup);
+    normalizeGroupNode(anatomyGroup, anatomyOffset);
+    updateBounds(stl);
+    fitStl(1.7);
+    applyRenderModeToPane(stl);
+  } else {
+    if (anatomyGroup.parent) stl.root.remove(anatomyGroup);
+    glb.root.add(anatomyObject);
+    fitToObject(glb, anatomyObject, 1.5);
+    applyRenderModeToPane(glb);
+  }
+}
+
+function setLayout(mode) {
+  layout = mode;
+  document.querySelectorAll('#layout-seg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.layout === mode));
+  document.body.classList.toggle('overlay-layout', mode === 'overlay');
+  $('#overlay-ctl').hidden = mode !== 'overlay';
+  $('#layout-desc').textContent = mode === 'overlay' ? 'Everything superimposed & aligned' : 'Anatomy & layers side by side';
+  placeAnatomy();
+  // Re-size + re-fit after the pane reflows to its new width (twice, to be safe:
+  // once on the next frame, once after layout has fully settled).
+  const resize = () => {
+    glb.size(); stl.size();
+    if (sampleGroups.size || anatomyObject) { updateBounds(stl); fitStl(mode === 'overlay' ? 1.7 : 1.45); }
+  };
+  requestAnimationFrame(resize);
+  setTimeout(resize, 90);
+  applyRenderModeAll();
+}
+
 // ---------------------------------------------------------------------------
 //  Camera framing
 // ---------------------------------------------------------------------------
-function fitToObject(pane, object, offset = 1.45) {
-  const box = new THREE.Box3().setFromObject(object);
+function fitBox(pane, box, offset = 1.45) {
   if (box.isEmpty()) return;
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
@@ -153,11 +241,34 @@ function fitToObject(pane, object, offset = 1.45) {
   pane.camera.position.copy(center).add(new THREE.Vector3(0, 0, dist));
   pane.controls.update();
   pane.defaultDist = dist;
+}
 
+function fitToObject(pane, object, offset = 1.45) {
+  const box = new THREE.Box3().setFromObject(object);
+  if (box.isEmpty()) return;
+  fitBox(pane, box, offset);
   updateBounds(pane);
 }
 
-function resetPane(pane) { if (pane.root.children.length) fitToObject(pane, pane.root); }
+// The STL workspace is framed on its sample groups (the subject); the anatomy,
+// which has far-reaching muscles/optic nerve, is context and may spill past.
+function stlWorkspaceBox() {
+  const box = new THREE.Box3();
+  for (const g of sampleGroups.values()) if (g.visible && g.children.length) box.expandByObject(g);
+  if (box.isEmpty()) box.setFromObject(stl.root);
+  return box;
+}
+function fitStl(offset = 1.45) {
+  const box = stlWorkspaceBox();
+  if (box.isEmpty()) return;
+  fitBox(stl, box, offset);
+  updateBounds(stl);
+}
+
+function resetPane(pane) {
+  if (pane === stl) fitStl(layout === 'overlay' ? 1.7 : 1.45);
+  else if (pane.root.children.length) fitToObject(pane, pane.root);
+}
 function resetAll() { panes.forEach(resetPane); }
 
 // ---------------------------------------------------------------------------
@@ -289,8 +400,7 @@ function makeMaterial(colorHex, opacity) {
 function applyColor(object, colorHex) {
   object.traverse((c) => { if (c.isMesh && c.material) c.material.color.setHex(colorHex); });
 }
-function applyOpacity(object, opacity) {
-  const o = opacity * globalOpacity;
+function setObjectOpacity(object, o) {
   object.traverse((c) => {
     if (c.isMesh && c.material && !c.userData.noClip) {
       c.material.opacity = o;
@@ -300,6 +410,14 @@ function applyOpacity(object, opacity) {
       c.material.needsUpdate = true;
     }
   });
+}
+
+// Effective opacity = per-layer × per-sample × global.
+function reapplyOpacity(structure) {
+  const obj = featureObjects.get(structure.id);
+  if (!obj) return;
+  const sample = findSample(structure.sampleId);
+  setObjectOpacity(obj, structure.opacity * (sample?.opacity ?? 1) * globalOpacity);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,12 +451,14 @@ async function loadLayer(structure) {
     const object = structure.kind === 'gltf' ? await parseGLTF(buffer) : parseSTL(buffer, structure);
     object.userData.id = structure.id;
     featureObjects.set(structure.id, object);
-    stl.root.add(object);
+    const isNewGroup = !sampleGroups.has(structure.sampleId);
+    getSampleGroup(structure.sampleId).add(object);
     applyColor(object, structure.color);
-    applyOpacity(object, structure.opacity);
+    normalizeSample(structure.sampleId);
+    reapplyOpacity(structure);
 
-    if (stl.root.children.length === 1) fitToObject(stl, stl.root);
-    else updateBounds(stl);
+    updateBounds(stl);
+    if (!stlFitted || isNewGroup) { fitStl(layout === 'overlay' ? 1.7 : 1.45); stlFitted = true; }
     applyRenderModeToPane(stl);
     refreshStlEmpty();
     setRowState(refs, 'loaded', (await isCached(structure.path)) ? 'Loaded · cached' : 'Loaded');
@@ -402,9 +522,9 @@ async function loadAnatomy() {
     renderOverlay('loading', { pct: 100, label: 'Building model…' });
     const scene = await parseGLTF_anatomy(buffer);
     glb.root.clear();
-    glb.root.add(scene);
-    fitToObject(glb, scene, 1.5);
-    applyRenderModeToPane(glb);
+    anatomyObject = scene;
+    setObjectOpacity(anatomyObject, anatomyOpacity);
+    placeAnatomy();
     glbOverlay.classList.add('hidden');
   } catch (err) {
     if (err.name === 'AbortError') { renderOverlay('idle'); return; }
@@ -476,18 +596,35 @@ function buildLayerTree() {
   for (const sample of samplesData.samples) {
     const group = document.createElement('div');
     group.className = 'sample';
+    if (sample.demo) group.classList.add('is-demo');
+
+    const headRow = document.createElement('div');
+    headRow.className = 'sample-head-row';
     const head = document.createElement('button');
     head.className = 'sample-head open';
     head.innerHTML = `<span class="caret">▸</span><span class="sample-name">${sample.label}</span>`;
-    if (sample.link) head.innerHTML += `<a class="sample-src" href="${sample.link}" target="_blank" rel="noopener" title="Open source dataset">↗</a>`;
+    const vis = document.createElement('input');
+    vis.type = 'checkbox'; vis.className = 'sample-vis'; vis.checked = true; vis.title = 'Show / hide whole sample';
+    const gear = document.createElement('button');
+    gear.className = 'sample-gear icon-btn'; gear.title = 'Position & opacity';
+    gear.innerHTML = '<span class="ms">tune</span>';
+    headRow.append(head, vis, gear);
+    if (sample.link) {
+      const a = document.createElement('a');
+      a.className = 'sample-src'; a.href = sample.link; a.target = '_blank'; a.rel = 'noopener'; a.title = 'Source dataset'; a.textContent = '↗';
+      headRow.appendChild(a);
+    }
+
+    const ctl = buildSampleControls(sample);
     const body = document.createElement('div');
     body.className = 'sample-body open';
-    head.addEventListener('click', (e) => {
-      if (e.target.closest('.sample-src')) return;
-      head.classList.toggle('open'); body.classList.toggle('open');
-    });
+
+    head.addEventListener('click', () => { head.classList.toggle('open'); body.classList.toggle('open'); });
+    vis.addEventListener('change', () => { const g = sampleGroups.get(sample.id); if (g) g.visible = vis.checked; });
+    gear.addEventListener('click', () => { ctl.hidden = !ctl.hidden; gear.classList.toggle('active', !ctl.hidden); });
+
     for (const st of sample.structures) { body.appendChild(buildRow(st)); count++; }
-    group.append(head, body);
+    group.append(headRow, ctl, body);
     layerTree.appendChild(group);
   }
   $('#layer-count').textContent = count;
@@ -497,6 +634,33 @@ function buildLayerTree() {
     $('#meta-sample').textContent = samplesData.samples[0].label;
     $('#study-label').textContent = `${samplesData.samples[0].label.toUpperCase()} · µCT · SEG`;
   }
+}
+
+// Per-sample transform panel: opacity + X/Y/Z offset (stack/separate) + reset.
+function buildSampleControls(sample) {
+  const wrap = document.createElement('div');
+  wrap.className = 'sample-ctl'; wrap.hidden = true;
+  wrap.innerHTML = `
+    ${sample.demo ? '<div class="demo-badge">synthetic demo copy</div>' : ''}
+    <div class="ctl-line"><span>Opacity</span><input type="range" class="slider s-op" min="0" max="100" value="${Math.round(sample.opacity * 100)}"></div>
+    <div class="ctl-line"><span>Offset X</span><input type="range" class="slider s-ox" min="-100" max="100" value="${sample.offset.x * 100}"></div>
+    <div class="ctl-line"><span>Offset Y</span><input type="range" class="slider s-oy" min="-100" max="100" value="${sample.offset.y * 100}"></div>
+    <div class="ctl-line"><span>Offset Z</span><input type="range" class="slider s-oz" min="-100" max="100" value="${sample.offset.z * 100}"></div>
+    <button class="link-btn s-reset">Reset position</button>`;
+
+  const op = wrap.querySelector('.s-op'); setFill(op);
+  op.addEventListener('input', () => { setFill(op); sample.opacity = Number(op.value) / 100; sample.structures.forEach(reapplyOpacity); });
+
+  for (const [ax, sel] of [['x', '.s-ox'], ['y', '.s-oy'], ['z', '.s-oz']]) {
+    const sl = wrap.querySelector(sel); setFill(sl);
+    sl.addEventListener('input', () => { setFill(sl); sample.offset[ax] = Number(sl.value) / 100; normalizeSample(sample.id); updateBounds(stl); });
+  }
+  wrap.querySelector('.s-reset').addEventListener('click', () => {
+    sample.offset = { x: 0, y: 0, z: 0 };
+    ['.s-ox', '.s-oy', '.s-oz'].forEach((s) => { const el = wrap.querySelector(s); el.value = 0; setFill(el); });
+    normalizeSample(sample.id); updateBounds(stl);
+  });
+  return wrap;
 }
 
 function buildRow(structure) {
@@ -544,8 +708,7 @@ function buildRow(structure) {
   opacity.addEventListener('input', (e) => {
     setFill(e.target);
     structure.opacity = Number(e.target.value) / 100;
-    const obj = featureObjects.get(structure.id);
-    if (obj) applyOpacity(obj, structure.opacity);
+    reapplyOpacity(structure);
   });
 
   checkbox.addEventListener('change', async () => {
@@ -682,6 +845,16 @@ function wireControls() {
     if (btn) setRenderMode(btn.dataset.mode);
   });
 
+  // Layout (split / overlay) + anatomy group controls
+  $('#layout-seg').addEventListener('click', (e) => { const b = e.target.closest('.seg-btn'); if (b) setLayout(b.dataset.layout); });
+  $('#an-vis').addEventListener('change', (e) => { if (anatomyObject) anatomyObject.visible = e.target.checked; });
+  const anOp = $('#an-op'); setFill(anOp);
+  anOp.addEventListener('input', () => { setFill(anOp); anatomyOpacity = Number(anOp.value) / 100; if (anatomyObject) setObjectOpacity(anatomyObject, anatomyOpacity); });
+  for (const [ax, id] of [['x', '#an-ox'], ['y', '#an-oy'], ['z', '#an-oz']]) {
+    const sl = $(id); setFill(sl);
+    sl.addEventListener('input', () => { setFill(sl); anatomyOffset[ax] = Number(sl.value) / 100; if (layout === 'overlay') { normalizeGroupNode(anatomyGroup, anatomyOffset); updateBounds(stl); } });
+  }
+
   // Slice plane controls
   document.querySelectorAll('.slice-toggle input').forEach((cb) => {
     cb.addEventListener('change', () => { clipState[cb.dataset.axis].on = cb.checked; panes.forEach(updateClips); });
@@ -704,10 +877,7 @@ function wireControls() {
     setFill(e.target);
     globalOpacity = Number(e.target.value) / 100;
     $('#opacity-val').textContent = `${e.target.value}%`;
-    for (const [id, obj] of featureObjects) {
-      const st = findStructure(id);
-      applyOpacity(obj, st ? st.opacity : 1);
-    }
+    for (const id of featureObjects.keys()) { const st = findStructure(id); if (st) reapplyOpacity(st); }
   });
   $('#auto-rotate').addEventListener('change', (e) => setAutoRotate(e.target.checked));
   $('#show-grid').addEventListener('change', (e) => panes.forEach((p) => { p.grid.visible = e.target.checked && !p.bounds.isEmpty(); }));
@@ -724,6 +894,7 @@ function findStructure(id) {
   for (const s of samplesData.samples) { const f = s.structures.find((x) => x.id === id); if (f) return f; }
   return null;
 }
+function findSample(id) { return samplesData.samples.find((s) => s.id === id) || null; }
 
 // ---------------------------------------------------------------------------
 //  Draggable divider

@@ -105,6 +105,22 @@
     <!-- ---------- Right rail ---------- -->
     <aside id="rail-right" class="rail">
       <section class="rail-sec">
+        <div class="sec-head"><span>VIEW</span></div>
+        <div class="seg seg-2" id="layout-seg">
+          <button class="seg-btn active" data-layout="split"><span class="ms">splitscreen</span><span>Split</span></button>
+          <button class="seg-btn" data-layout="overlay"><span class="ms">layers</span><span>Overlay</span></button>
+        </div>
+        <div class="seg-desc mono" id="layout-desc">Anatomy &amp; layers side by side</div>
+        <div id="overlay-ctl" hidden>
+          <label class="inline-toggle"><span>Show anatomy</span><span class="switch"><input type="checkbox" id="an-vis" checked /><span class="knob"></span></span></label>
+          <div class="ctl-line"><span>Anatomy opacity</span><input type="range" class="slider" id="an-op" min="0" max="100" value="100" /></div>
+          <div class="ctl-line"><span>Anatomy X</span><input type="range" class="slider" id="an-ox" min="-100" max="100" value="0" /></div>
+          <div class="ctl-line"><span>Anatomy Y</span><input type="range" class="slider" id="an-oy" min="-100" max="100" value="0" /></div>
+          <div class="ctl-line"><span>Anatomy Z</span><input type="range" class="slider" id="an-oz" min="-100" max="100" value="0" /></div>
+        </div>
+      </section>
+
+      <section class="rail-sec">
         <div class="sec-head"><span>RENDERING</span></div>
         <div class="seg" id="render-mode" role="tablist">
           <button class="seg-btn active" data-mode="surface" role="tab"><span class="ms">deployed_code</span><span>Surface</span></button>
