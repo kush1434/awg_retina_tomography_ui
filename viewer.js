@@ -44,6 +44,7 @@ let renderMode = 'surface';                         // surface | wireframe | sli
 let layout = 'split';                               // split | overlay
 let globalOpacity = 1;
 let autoRotate = false;
+let linkOffsets = false;                            // move all sample offsets together
 const OVERLAY_TARGET = 100;                          // groups are normalised to this size
 const clipState = {
   x: { on: false, pos: 0.5 },
@@ -139,6 +140,7 @@ const panes = [glb, stl];
 // under stl.root, so samples stack on top of each other. In overlay layout the
 // eye anatomy is merged in as another group.
 const sampleGroups = new Map();     // sampleId -> THREE.Group
+const sampleCtlRefs = new Map();    // sampleId -> { ox, oy, oz } offset slider inputs
 const anatomyGroup = new THREE.Group();
 let anatomyObject = null;
 let stlFitted = false;
@@ -182,6 +184,21 @@ function normalizeSample(sampleId) {
   const g = sampleGroups.get(sampleId);
   const sample = findSample(sampleId);
   if (g && sample) normalizeGroupNode(g, sample.offset);
+}
+
+// Set one sample's offset on an axis, syncing its slider UI + 3D group.
+function setSampleOffset(sample, ax, value) {
+  sample.offset[ax] = value;
+  const ref = sampleCtlRefs.get(sample.id);
+  if (ref && ref['o' + ax]) { ref['o' + ax].value = Math.round(value * 100); setFill(ref['o' + ax]); }
+  normalizeSample(sample.id);
+}
+
+// Apply an offset to the edited sample, or — when linked — to every sample.
+function offsetChanged(sample, ax, value) {
+  if (linkOffsets) samplesData.samples.forEach((s) => setSampleOffset(s, ax, value));
+  else setSampleOffset(sample, ax, value);
+  updateBounds(stl);
 }
 
 // Route the anatomy model to the correct place for the current layout:
@@ -651,14 +668,17 @@ function buildSampleControls(sample) {
   const op = wrap.querySelector('.s-op'); setFill(op);
   op.addEventListener('input', () => { setFill(op); sample.opacity = Number(op.value) / 100; sample.structures.forEach(reapplyOpacity); });
 
+  const refs = {};
   for (const [ax, sel] of [['x', '.s-ox'], ['y', '.s-oy'], ['z', '.s-oz']]) {
-    const sl = wrap.querySelector(sel); setFill(sl);
-    sl.addEventListener('input', () => { setFill(sl); sample.offset[ax] = Number(sl.value) / 100; normalizeSample(sample.id); updateBounds(stl); });
+    const sl = wrap.querySelector(sel); setFill(sl); refs['o' + ax] = sl;
+    sl.addEventListener('input', () => { setFill(sl); offsetChanged(sample, ax, Number(sl.value) / 100); });
   }
+  sampleCtlRefs.set(sample.id, refs);
+
   wrap.querySelector('.s-reset').addEventListener('click', () => {
-    sample.offset = { x: 0, y: 0, z: 0 };
-    ['.s-ox', '.s-oy', '.s-oz'].forEach((s) => { const el = wrap.querySelector(s); el.value = 0; setFill(el); });
-    normalizeSample(sample.id); updateBounds(stl);
+    const targets = linkOffsets ? samplesData.samples : [sample];
+    for (const s of targets) for (const ax of ['x', 'y', 'z']) setSampleOffset(s, ax, 0);
+    updateBounds(stl);
   });
   return wrap;
 }
@@ -881,6 +901,14 @@ function wireControls() {
   });
   $('#auto-rotate').addEventListener('change', (e) => setAutoRotate(e.target.checked));
   $('#show-grid').addEventListener('change', (e) => panes.forEach((p) => { p.grid.visible = e.target.checked && !p.bounds.isEmpty(); }));
+  $('#link-offsets').addEventListener('change', (e) => {
+    linkOffsets = e.target.checked;
+    if (linkOffsets) {   // snap every sample to the first sample's offset
+      const base = samplesData.samples[0]?.offset || { x: 0, y: 0, z: 0 };
+      for (const ax of ['x', 'y', 'z']) samplesData.samples.forEach((s) => setSampleOffset(s, ax, base[ax]));
+      updateBounds(stl);
+    }
+  });
 
   // Mobile left-rail drawer
   $('#rail-left-restore').addEventListener('click', () => document.body.classList.toggle('no-left'));
