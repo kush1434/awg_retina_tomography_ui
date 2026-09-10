@@ -1,0 +1,11 @@
+{
+  "name": "retina-bench",
+  "private": true,
+  "type": "module",
+  "description": "Measures the shipped assets and the geometric cost of decimation",
+  "dependencies": {
+    "@gltf-transform/core": "^4.0.0",
+    "@gltf-transform/extensions": "^4.0.0",
+    "draco3dgltf": "^1.5.7"
+  }
+}

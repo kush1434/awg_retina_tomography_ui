@@ -9,3 +9,7 @@ node_modules/
 # Optimization working files (large source meshes & intermediates)
 tools/optimize/original/
 tools/optimize/out/
+
+# Test output
+test-results/
+playwright-report/

@@ -81,7 +81,7 @@ near-identical twins separated only in y and take the source script's own
 ## `upat` — Upatras OpenSim oculomotor model
 
 *An Open-Source OpenSim Oculomotor Model for Kinematics and Dynamics Simulation*
-— Dimitar Stanev et al., University of Patras.
+— Konstantinos Filip, Dimitar Stanev, Konstantinos Moustakas, University of Patras.
 [arXiv:1807.07332](https://arxiv.org/abs/1807.07332) ·
 <https://simtk.org/projects/eye> · source at
 <https://gitlab.com/mitkof6/upat_eye_model>.

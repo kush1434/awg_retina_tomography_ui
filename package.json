@@ -1,0 +1,22 @@
+{
+  "name": "awg-retina-tomography-ui",
+  "version": "1.0.0",
+  "description": "Interactive 3D web viewer for GeneLab AWG retina micro-tomography",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GoJian/awg_retina_tomography_ui.git"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:watch": "node --test --watch test/*.test.js",
+    "test:e2e": "playwright test",
+    "serve": "python3 tools/dev-serve.py",
+    "bench": "node tools/bench/bench.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

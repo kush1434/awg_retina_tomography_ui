@@ -105,6 +105,52 @@ See [`tools/optimize/`](tools/optimize) for the pipeline.
 
 ---
 
+## Tests
+
+```bash
+npm test                       # unit tests — no dependencies, just Node >= 20
+npm install && npx playwright install chromium
+npm run test:e2e               # browser tests against the real viewer
+```
+
+`npm test` covers the manifest parser, the optimized-asset resolution, the
+Hugging Face retry, the streaming/caching asset loader, and the geometry code
+behind the reported decimation error (61 tests, Node's built-in runner, no
+dependencies). `npm run test:e2e` drives the actual application in Chromium and
+checks that WebGL starts, that a toggled layer reaches the GPU, that the asset
+cache fills, and that the controls behave (18 tests). Both run in CI on every
+push, along with a decode of every shipped asset.
+
+## Benchmarks
+
+```bash
+cd tools/bench && npm install && node bench.mjs
+```
+
+Reports the size, triangle count and compression of every shipped asset, and
+the first-paint payload. `node bench.mjs --verify <source.stl> <optimized.glb>`
+measures the surface error introduced by decimation. See
+[`tools/bench/README.md`](tools/bench/README.md).
+
+Measured on the shipped assets:
+
+| Source mesh | Triangles | Size | Shipped | Reduction | Mean surface error | Area change |
+|---|---:|---:|---:|---:|---:|---:|
+| `eye.stl` | 21,141,576 | 1008 MB | 633 KB | 1631x | 0.017% | +0.63% |
+| `feature.stl` | 3,131,220 | 149 MB | 325 KB | 471x | 0.006% | +0.21% |
+
+Errors are symmetric point-to-surface distances as a fraction of the
+bounding-box diagonal. The viewer is meant for orientation, teaching and
+qualitative inspection — **not** as a substitute for the source mesh in
+morphometric analysis.
+
+## Contributing
+
+Bug reports, questions and pull requests are welcome — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+---
+
 ## Deployment
 
 This is a static site; it deploys as-is to any static host.
