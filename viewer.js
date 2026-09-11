@@ -11,13 +11,12 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-import { loadCSVData, probeSizes, resolveStructure, samplesData, formatBytes } from './data-loader.js?v=7';
-import { fetchBuffer, isCached, clearCache } from './asset-loader.js?v=7';
+import { loadCSVData, probeSizes, resolveStructure, samplesData, formatBytes } from './data-loader.js';
+import { fetchBuffer, isCached, clearCache } from './asset-loader.js';
 
 // ---------------------------------------------------------------------------
 //  Config
 // ---------------------------------------------------------------------------
-const HF_BASE = 'https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui/resolve/main';
 const HEAVY_BYTES = 400 * 1024 * 1024;
 const PLANE_COLORS = { x: 0x7bd88f, y: 0xebb46e, z: 0x78aaeb };  // sagittal / axial / coronal
 

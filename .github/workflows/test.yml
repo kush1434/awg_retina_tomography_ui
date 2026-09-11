@@ -19,8 +19,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      # The data modules have no runtime dependencies; the suite runs on the
-      # bare Node test runner.
+      # three is a devDependency so the core library can be exercised
+      # headless; the suite itself runs on the bare Node test runner.
+      - run: npm ci
       - run: npm test
 
   e2e:

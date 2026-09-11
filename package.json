@@ -9,9 +9,12 @@
     "type": "git",
     "url": "https://github.com/GoJian/awg_retina_tomography_ui.git"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "test": "node --test \"test/*.test.js\" \"test/core/*.test.js\"",
-    "test:watch": "node --test --watch \"test/*.test.js\" \"test/core/*.test.js\"",
+    "test": "node --test test/*.test.js test/core/*.test.js",
+    "test:watch": "node --test --watch test/*.test.js test/core/*.test.js",
     "test:e2e": "playwright test",
     "serve": "python3 tools/dev-serve.py",
     "bench": "node tools/bench/bench.mjs"
