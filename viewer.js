@@ -12,20 +12,17 @@ import { fetchBuffer, isCached, clearCache } from './asset-loader.js';
 import { browserAdapters, mountPane } from './app/browser-adapters.js';
 import { createPane } from './core/pane.js';
 import { ANATOMY_MODELS, DEFAULT_MODEL_ID, modelById, resolveModelId, structureMeta, presetOf } from './core/anatomy-models.js';
-import { normalizeGroup, fitBox, fitToObject, unionBoxOfGroups } from './core/framing.js';
-import { makeMaterial, applyColor, setObjectOpacity, disposeObject } from './core/materials.js';
+import { normalizeGroup, fitBox, fitToObject } from './core/framing.js';
+import { makeMaterial, setObjectOpacity, disposeObject } from './core/materials.js';
 import {
-  createClipState, clearCaps,
+  createClipState,
   updateBounds as coreUpdateBounds, updateClips as coreUpdateClips,
   applyRenderModeToPane as coreApplyRenderModeToPane, buildCaps as coreBuildCaps,
 } from './core/clipping.js';
 import { CameraSync } from './core/orientation.js';
 import { createLoaders, createMeshParsers } from './core/mesh-parsers.js';
-
-// ---------------------------------------------------------------------------
-//  Config
-// ---------------------------------------------------------------------------
-const HEAVY_BYTES = 400 * 1024 * 1024;
+import { createEmitter } from './core/emitter.js';
+import { LayerController, HEAVY_BYTES } from './core/layers.js';
 
 // ---------------------------------------------------------------------------
 //  DOM
@@ -72,43 +69,24 @@ const stl = createPane({ id: 'stl', capsEnabled: true, adapters: browserAdapters
 const mounts = { glb: mountPane(glb, glbPane), stl: mountPane(stl, stlPane) };
 const panes = [glb, stl];
 
+// ---------------------------------------------------------------------------
+//  Events
+// ---------------------------------------------------------------------------
+// The core library talks outward only through this emitter; the listeners
+// (wired in init) render each transition into the DOM.
+const emitter = createEmitter();
+
 // The STL pane is the "overlay workspace": every sample is a normalised group
-// under stl.root, so samples stack on top of each other. In overlay layout the
-// eye anatomy is merged in as another group.
-const sampleGroups = new Map();     // sampleId -> THREE.Group
+// under stl.root, so samples stack on top of each other — core/layers.js owns
+// those groups, the loaded layers, the in-flight downloads and the per-sample
+// offset / opacity rules. In overlay layout the eye anatomy is merged in as
+// another group.
+const layers = new LayerController({ pane: stl, view, io: { fetchBuffer, isCached }, parsers, emitter });
 const sampleCtlRefs = new Map();    // sampleId -> { ox, oy, oz } offset slider inputs
 const anatomyGroup = new THREE.Group();
 let anatomyObject = null;
-let stlFitted = false;
 const anatomyOffset = { x: 0, y: 0, z: 0 };
 let anatomyOpacity = 1;
-
-function getSampleGroup(sampleId) {
-  let g = sampleGroups.get(sampleId);
-  if (!g) { g = new THREE.Group(); g.userData.sampleId = sampleId; stl.root.add(g); sampleGroups.set(sampleId, g); }
-  return g;
-}
-
-function normalizeSample(sampleId) {
-  const g = sampleGroups.get(sampleId);
-  const sample = findSample(sampleId);
-  if (g && sample) normalizeGroup(g, sample.offset);
-}
-
-// Set one sample's offset on an axis, syncing its slider UI + 3D group.
-function setSampleOffset(sample, ax, value) {
-  sample.offset[ax] = value;
-  const ref = sampleCtlRefs.get(sample.id);
-  if (ref && ref['o' + ax]) { ref['o' + ax].value = Math.round(value * 100); setFill(ref['o' + ax]); }
-  normalizeSample(sample.id);
-}
-
-// Apply an offset to the edited sample, or — when linked — to every sample.
-function offsetChanged(sample, ax, value) {
-  if (view.linkOffsets) samplesData.samples.forEach((s) => setSampleOffset(s, ax, value));
-  else setSampleOffset(sample, ax, value);
-  updateBounds(stl);
-}
 
 // Route the anatomy model to the correct place for the current layout:
 // its own left pane (split) or merged into the overlay workspace (overlay).
@@ -120,7 +98,7 @@ function placeAnatomy() {
     if (!anatomyGroup.parent) stl.root.add(anatomyGroup);
     normalizeGroup(anatomyGroup, anatomyOffset);
     updateBounds(stl);
-    fitStl(1.7);
+    layers.fitStl(1.7);
     applyRenderModeToPane(stl);
   } else {
     if (anatomyGroup.parent) stl.root.remove(anatomyGroup);
@@ -142,7 +120,7 @@ function setLayout(mode) {
   // once on the next frame, once after layout has fully settled).
   const resize = () => {
     mounts.glb.measure(); mounts.stl.measure();
-    if (sampleGroups.size || anatomyObject) { updateBounds(stl); fitStl(mode === 'overlay' ? 1.7 : 1.45); }
+    if (layers.groupCount() || anatomyObject) { updateBounds(stl); layers.fitStl(mode === 'overlay' ? 1.7 : 1.45); }
   };
   requestAnimationFrame(resize);
   setTimeout(resize, 90);
@@ -152,9 +130,6 @@ function setLayout(mode) {
 // ---------------------------------------------------------------------------
 //  Camera framing
 // ---------------------------------------------------------------------------
-// The STL workspace is framed on its sample groups (the subject); the anatomy,
-// which has far-reaching muscles/optic nerve, is context and may spill past.
-function stlWorkspaceBox() { return unionBoxOfGroups(sampleGroups.values(), stl.root); }
 // Frame the left pane on the globe rather than on everything: the optic nerve
 // runs ~8 mm past the sclera, and fitting that whole extent shrinks the eye
 // itself. Padded a little so the nerve still reads as it leaves the frame.
@@ -172,15 +147,8 @@ function anatomyFocusBox() {
   return box;
 }
 
-function fitStl(offset = 1.45) {
-  const box = stlWorkspaceBox();
-  if (box.isEmpty()) return;
-  fitBox(stl, box, offset);
-  updateBounds(stl);
-}
-
 function resetPane(pane) {
-  if (pane === stl) fitStl(view.layout === 'overlay' ? 1.7 : 1.45);
+  if (pane === stl) layers.fitStl(view.layout === 'overlay' ? 1.7 : 1.45);
   else if (anatomyParts.size) fitBox(pane, anatomyFocusBox(), 1.75, ANATOMY_VIEW_DIR);
   else if (pane.root.children.length && fitToObject(pane, pane.root)) updateBounds(pane);
 }
@@ -231,106 +199,43 @@ function setSync(on) {
 }
 
 // ---------------------------------------------------------------------------
-//  Materials
+//  Layer rows
 // ---------------------------------------------------------------------------
-// Effective opacity = per-layer × per-sample × global.
-function reapplyOpacity(structure) {
-  const obj = featureObjects.get(structure.id);
-  if (!obj) return;
-  const sample = findSample(structure.sampleId);
-  setObjectOpacity(obj, structure.opacity * (sample?.opacity ?? 1) * view.globalOpacity);
-}
-
-// ---------------------------------------------------------------------------
-//  Layer loading
-// ---------------------------------------------------------------------------
-const featureObjects = new Map();
+// Downloading, parsing and placing a layer lives in core/layers.js; the app
+// keeps the row elements and renders the controller's events onto them.
 const rowRefs = new Map();
-const inFlight = new Map();
 
-// "Solid fill" mode: swap the F10 ocular coats for their solid-slab variant,
-// which fills each coat inward to the next coat (no gaps, no hollow shells).
-// The variant meshes ship alongside the normal ones under optimized/<dir>_solid/.
-function solidVariant(path) {
-  // Map any F10 coat path (remote HF original or local optimized) to the
-  // locally-shipped solid-fill slab, so the toggle works regardless of source.
-  const m = path && path.match(/F10_layers\/([^/?#]+\.glb)/i);
-  return m ? `optimized/F10_layers_solid/${m[1]}` : null;
+function wireLayerEvents() {
+  emitter.on('layer:state', ({ id, state, phase, cached }) => {
+    const refs = rowRefs.get(id);
+    if (!refs) return;
+    const label = state === 'loading'
+      ? { start: 'Downloading… 0%', cache: 'Loading from cache…', build: 'Building mesh…' }[phase]
+      : state === 'loaded' ? (cached ? 'Loaded · cached' : 'Loaded')
+        : state === 'error' ? 'Failed to load' : '';
+    setRowState(refs, state, label);
+    if (state === 'loading' && phase === 'build') refs.bar.style.width = '100%';
+  });
+  emitter.on('layer:progress', ({ id, loaded, total, pct }) => {
+    const refs = rowRefs.get(id);
+    if (!refs) return;
+    refs.bar.style.width = `${total ? Math.min(pct, 99) : 50}%`;
+    refs.status.textContent = total
+      ? `Downloading… ${pct}% (${formatBytes(loaded)} / ${formatBytes(total)})`
+      : `Downloading… ${formatBytes(loaded)}`;
+  });
+  emitter.on('layer:error', ({ id, label, error }) => {
+    toast(`Couldn't load "${label}". ${error.message}`, 'error');
+    const refs = rowRefs.get(id);
+    if (refs) refs.checkbox.checked = false;
+  });
+  emitter.on('layers:visible', ({ anyVisible }) => stlEmpty.classList.toggle('hidden', anyVisible));
+  // Keep a sample's offset sliders in step with its 3D group.
+  emitter.on('sample:offset', ({ sampleId, axis, value }) => {
+    const ref = sampleCtlRefs.get(sampleId);
+    if (ref && ref['o' + axis]) { ref['o' + axis].value = Math.round(value * 100); setFill(ref['o' + axis]); }
+  });
 }
-function effectivePath(structure) {
-  if (view.solidFill) { const v = solidVariant(structure.path); if (v) return v; }
-  return structure.path;
-}
-// Reload every currently-loaded F10 coat from the active variant, preserving
-// each row's visibility. Called when the Solid-fill toggle flips.
-async function reloadFillVariants() {
-  const affected = [...featureObjects.keys()]
-    .map((id) => findStructure(id))
-    .filter((st) => st && solidVariant(st.path));
-  clearCaps(stl);   // drop caps that reference geometry we're about to dispose
-  for (const st of affected) {
-    const obj = featureObjects.get(st.id);
-    const wasVisible = !!obj && obj.visible;
-    if (inFlight.has(st.id)) inFlight.get(st.id).abort();
-    if (obj) { obj.parent?.remove(obj); disposeObject(obj); featureObjects.delete(st.id); }
-    await loadLayer(st);
-    const fresh = featureObjects.get(st.id);
-    if (fresh) fresh.visible = wasVisible;
-  }
-  refreshStlEmpty();
-}
-
-async function loadLayer(structure) {
-  const refs = rowRefs.get(structure.id);
-  const url = effectivePath(structure);
-  const controller = new AbortController();
-  inFlight.set(structure.id, controller);
-  setRowState(refs, 'loading', 'Downloading… 0%');
-
-  try {
-    const buffer = await fetchBuffer(url, {
-      signal: controller.signal,
-      onProgress: ({ loaded, total, fromCache }) => {
-        if (fromCache) { setRowState(refs, 'loading', 'Loading from cache…'); return; }
-        const pct = total ? Math.round((loaded / total) * 100) : 0;
-        refs.bar.style.width = `${total ? Math.min(pct, 99) : 50}%`;
-        refs.status.textContent = total
-          ? `Downloading… ${pct}% (${formatBytes(loaded)} / ${formatBytes(total)})`
-          : `Downloading… ${formatBytes(loaded)}`;
-      },
-    });
-    setRowState(refs, 'loading', 'Building mesh…');
-    refs.bar.style.width = '100%';
-
-    const object = structure.kind === 'gltf' ? await parseGLTF(buffer) : parseSTL(buffer, structure);
-    object.userData.id = structure.id;
-    featureObjects.set(structure.id, object);
-    const isNewGroup = !sampleGroups.has(structure.sampleId);
-    getSampleGroup(structure.sampleId).add(object);
-    applyColor(object, structure.color);
-    normalizeSample(structure.sampleId);
-    reapplyOpacity(structure);
-
-    updateBounds(stl);
-    if (!stlFitted || isNewGroup) { fitStl(view.layout === 'overlay' ? 1.7 : 1.45); stlFitted = true; }
-    applyRenderModeToPane(stl);
-    refreshStlEmpty();
-    setRowState(refs, 'loaded', (await isCached(url)) ? 'Loaded · cached' : 'Loaded');
-  } catch (err) {
-    if (err.name === 'AbortError') setRowState(refs, 'idle', '');
-    else {
-      console.error(`Layer "${structure.label}" failed:`, err);
-      setRowState(refs, 'error', 'Failed to load');
-      toast(`Couldn't load "${structure.label}". ${err.message}`, 'error');
-      refs.checkbox.checked = false;
-    }
-  } finally {
-    inFlight.delete(structure.id);
-  }
-}
-
-const parseSTL = (buffer, structure) => parsers.parseSTL(buffer, structure);
-const parseGLTF = (buffer) => parsers.parseGLTF(buffer);
 
 // ---------------------------------------------------------------------------
 //  Anatomy GLB (left pane) — lazy
@@ -778,7 +683,7 @@ function buildLayerTree() {
     body.className = 'sample-body open';
 
     head.addEventListener('click', () => { head.classList.toggle('open'); body.classList.toggle('open'); });
-    vis.addEventListener('change', () => { const g = sampleGroups.get(sample.id); if (g) g.visible = vis.checked; });
+    vis.addEventListener('change', () => layers.setSampleVisible(sample.id, vis.checked));
     gear.addEventListener('click', () => { ctl.hidden = !ctl.hidden; gear.classList.toggle('active', !ctl.hidden); });
 
     for (const st of sample.structures) { body.appendChild(buildRow(st)); count++; }
@@ -807,20 +712,16 @@ function buildSampleControls(sample) {
     <button class="link-btn s-reset">Reset position</button>`;
 
   const op = wrap.querySelector('.s-op'); setFill(op);
-  op.addEventListener('input', () => { setFill(op); sample.opacity = Number(op.value) / 100; sample.structures.forEach(reapplyOpacity); });
+  op.addEventListener('input', () => { setFill(op); layers.setSampleOpacity(sample, Number(op.value) / 100); });
 
   const refs = {};
   for (const [ax, sel] of [['x', '.s-ox'], ['y', '.s-oy'], ['z', '.s-oz']]) {
     const sl = wrap.querySelector(sel); setFill(sl); refs['o' + ax] = sl;
-    sl.addEventListener('input', () => { setFill(sl); offsetChanged(sample, ax, Number(sl.value) / 100); });
+    sl.addEventListener('input', () => { setFill(sl); layers.offsetChanged(sample, ax, Number(sl.value) / 100); });
   }
   sampleCtlRefs.set(sample.id, refs);
 
-  wrap.querySelector('.s-reset').addEventListener('click', () => {
-    const targets = view.linkOffsets ? samplesData.samples : [sample];
-    for (const s of targets) for (const ax of ['x', 'y', 'z']) setSampleOffset(s, ax, 0);
-    updateBounds(stl);
-  });
+  wrap.querySelector('.s-reset').addEventListener('click', () => layers.resetOffsets(sample));
   return wrap;
 }
 
@@ -862,36 +763,30 @@ function buildRow(structure) {
   swatch.addEventListener('click', () => colorInput.click());
   colorInput.addEventListener('input', (e) => {
     swatch.style.background = e.target.value;
-    structure.color = parseInt(e.target.value.slice(1), 16);
-    const obj = featureObjects.get(structure.id);
-    if (obj) applyColor(obj, structure.color);
-    buildCaps(stl);
+    layers.setColor(structure, parseInt(e.target.value.slice(1), 16));
   });
   opacity.addEventListener('input', (e) => {
     setFill(e.target);
-    structure.opacity = Number(e.target.value) / 100;
-    reapplyOpacity(structure);
+    layers.setOpacity(structure, Number(e.target.value) / 100);
   });
 
   checkbox.addEventListener('change', async () => {
-    const existing = featureObjects.get(structure.id);
     if (checkbox.checked) {
-      if (existing) { existing.visible = true; refreshStlEmpty(); return; }
+      if (layers.has(structure.id)) { layers.setVisible(structure.id, true); return; }
       if (!structure._resolved) {
         setRowState(rowRefs.get(structure.id), 'loading', 'Checking…');
         await resolveStructure(structure);
         annotateSize(structure);
         if (!checkbox.checked) { setRowState(rowRefs.get(structure.id), 'idle', ''); return; }
       }
-      if (structure.bytes && structure.bytes > HEAVY_BYTES && !(await isCached(structure.path))) {
+      if (layers.isHeavy(structure) && !(await isCached(structure.path))) {
         const ok = await askConfirm({ title: 'Large layer', message: `“${structure.label}” is ${formatBytes(structure.bytes)}. It will download once and then be cached. Continue?`, confirmLabel: 'Download' });
         if (!ok) { checkbox.checked = false; return; }
       }
-      loadLayer(structure);
+      layers.load(structure);
     } else {
-      if (inFlight.has(structure.id)) inFlight.get(structure.id).abort();
-      if (existing) existing.visible = false;
-      refreshStlEmpty();
+      layers.abort(structure.id);
+      layers.setVisible(structure.id, false);
     }
   });
   return row;
@@ -904,24 +799,14 @@ function annotateSize(structure) {
     refs.sizeEl.classList.toggle('heavy', structure.bytes > HEAVY_BYTES);
   }
 }
-function refreshStlEmpty() {
-  const anyVisible = [...featureObjects.values()].some((o) => o.visible);
-  stlEmpty.classList.toggle('hidden', anyVisible);
-  buildCaps(stl);   // keep cross-section caps in sync with which coats are shown
-}
-
 // ---------------------------------------------------------------------------
 //  Study selector (top bar) — pick & frame a sample
 // ---------------------------------------------------------------------------
 function focusSample(sampleId) {
-  const sample = findSample(sampleId);
+  const sample = layers.findSample(sampleId);
   if (sample) $('#study-label').textContent = `${sample.label.toUpperCase()} · µCT · SEG`;
 
-  const g = sampleGroups.get(sampleId);
-  if (g && g.children.length) {
-    const box = new THREE.Box3().setFromObject(g);
-    if (!box.isEmpty()) { fitBox(stl, box, 1.6); updateBounds(stl); }
-  }
+  layers.focusSample(sampleId);
   // Reveal the sample in the left rail.
   const el = layerTree.querySelector(`[data-sample-id="${sampleId}"]`);
   el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1062,7 +947,7 @@ function wireControls() {
 
   $('#solid-fill').addEventListener('change', (e) => {
     view.solidFill = e.target.checked;
-    reloadFillVariants();
+    layers.reloadFillVariants();
   });
 
   $('#btn-clear-cache').addEventListener('click', async () => {
@@ -1121,17 +1006,13 @@ function wireControls() {
     setFill(e.target);
     view.globalOpacity = Number(e.target.value) / 100;
     $('#opacity-val').textContent = `${e.target.value}%`;
-    for (const id of featureObjects.keys()) { const st = findStructure(id); if (st) reapplyOpacity(st); }
+    layers.reapplyAllOpacity();
   });
   $('#auto-rotate').addEventListener('change', (e) => setAutoRotate(e.target.checked));
   $('#show-grid').addEventListener('change', (e) => panes.forEach((p) => { p.grid.visible = e.target.checked && !p.bounds.isEmpty(); }));
   $('#link-offsets').addEventListener('change', (e) => {
     view.linkOffsets = e.target.checked;
-    if (view.linkOffsets) {   // snap every sample to the first sample's offset
-      const base = samplesData.samples[0]?.offset || { x: 0, y: 0, z: 0 };
-      for (const ax of ['x', 'y', 'z']) samplesData.samples.forEach((s) => setSampleOffset(s, ax, base[ax]));
-      updateBounds(stl);
-    }
+    if (view.linkOffsets) layers.snapOffsetsToFirst();   // snap every sample to the first sample's offset
   });
 
   // Mobile left-rail drawer
@@ -1141,12 +1022,6 @@ function wireControls() {
     if (window.matchMedia('(max-width: 620px)').matches) document.body.classList.add('no-left');
   });
 }
-
-function findStructure(id) {
-  for (const s of samplesData.samples) { const f = s.structures.find((x) => x.id === id); if (f) return f; }
-  return null;
-}
-function findSample(id) { return samplesData.samples.find((s) => s.id === id) || null; }
 
 // ---------------------------------------------------------------------------
 //  Draggable divider
@@ -1207,16 +1082,18 @@ async function init() {
   addHUD(glb, glbPane);
   addHUD(stl, stlPane);
   wireControls();
+  wireLayerEvents();
   wireDivider();
   setRenderMode('surface');
   buildModelMenu();
   buildAnatomyTree();
   renderOverlay('idle');
-  refreshStlEmpty();
+  layers.syncVisibility();
   requestAnimationFrame(animate);
 
   try {
     await loadCSVData();
+    layers.setSamples(samplesData.samples);
     buildLayerTree();
     buildStudyMenu();
     probeSizes(annotateSize);
