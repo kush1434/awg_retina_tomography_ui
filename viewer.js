@@ -6,9 +6,6 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { STLLoader } from 'three/addons/loaders/STLLoader.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 import { loadCSVData, probeSizes, resolveStructure, samplesData, formatBytes } from './data-loader.js';
 import { fetchBuffer, isCached, clearCache } from './asset-loader.js';
@@ -23,6 +20,7 @@ import {
   applyRenderModeToPane as coreApplyRenderModeToPane, buildCaps as coreBuildCaps,
 } from './core/clipping.js';
 import { CameraSync } from './core/orientation.js';
+import { createLoaders, createMeshParsers } from './core/mesh-parsers.js';
 
 // ---------------------------------------------------------------------------
 //  Config
@@ -59,11 +57,7 @@ const view = {
 // ---------------------------------------------------------------------------
 //  Shared loaders
 // ---------------------------------------------------------------------------
-const dracoLoader = new DRACOLoader();
-dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
-const gltfLoader = new GLTFLoader();
-gltfLoader.setDRACOLoader(dracoLoader);
-const stlLoader = new STLLoader();
+const parsers = createMeshParsers(createLoaders());
 
 // ---------------------------------------------------------------------------
 //  Panes
@@ -335,25 +329,8 @@ async function loadLayer(structure) {
   }
 }
 
-function parseSTL(buffer, structure) {
-  const geometry = stlLoader.parse(buffer);
-  geometry.computeVertexNormals();
-  return new THREE.Mesh(geometry, makeMaterial(structure.color, structure.opacity));
-}
-function parseGLTF(buffer) {
-  return new Promise((resolve, reject) => {
-    gltfLoader.parse(buffer, '', (gltf) => {
-      gltf.scene.traverse((c) => {
-        if (c.isMesh) {
-          c.frustumCulled = false;
-          if (!c.geometry.attributes.normal) c.geometry.computeVertexNormals();
-          c.material = makeMaterial(0xffffff, 1);
-        }
-      });
-      resolve(gltf.scene);
-    }, reject);
-  });
-}
+const parseSTL = (buffer, structure) => parsers.parseSTL(buffer, structure);
+const parseGLTF = (buffer) => parsers.parseGLTF(buffer);
 
 // ---------------------------------------------------------------------------
 //  Anatomy GLB (left pane) — lazy
@@ -428,18 +405,7 @@ async function loadAnatomy() {
     anatomyController = null;
   }
 }
-function parseGLTF_anatomy(buffer) {
-  return new Promise((resolve, reject) => {
-    gltfLoader.parse(buffer, '', (gltf) => {
-      gltf.scene.traverse((c) => {
-        if (!c.isMesh) return;
-        c.frustumCulled = false;
-        if (!c.geometry.attributes.normal) c.geometry.computeVertexNormals();
-      });
-      resolve(gltf.scene);
-    }, reject);
-  });
-}
+const parseGLTF_anatomy = (buffer) => parsers.parseAnatomyGLTF(buffer);
 
 // ---------------------------------------------------------------------------
 //  Anatomy structures — per-structure meshes, colour & opacity
