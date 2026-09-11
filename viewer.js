@@ -11,9 +11,8 @@ import { loadCSVData, probeSizes, resolveStructure, samplesData, formatBytes } f
 import { fetchBuffer, isCached, clearCache } from './asset-loader.js';
 import { browserAdapters, mountPane } from './app/browser-adapters.js';
 import { createPane } from './core/pane.js';
-import { ANATOMY_MODELS, DEFAULT_MODEL_ID, modelById, resolveModelId, structureMeta, presetOf } from './core/anatomy-models.js';
-import { normalizeGroup, fitBox, fitToObject } from './core/framing.js';
-import { makeMaterial, setObjectOpacity, disposeObject } from './core/materials.js';
+import { ANATOMY_MODELS } from './core/anatomy-models.js';
+import { fitBox, fitToObject } from './core/framing.js';
 import {
   createClipState,
   updateBounds as coreUpdateBounds, updateClips as coreUpdateClips,
@@ -23,6 +22,7 @@ import { CameraSync } from './core/orientation.js';
 import { createLoaders, createMeshParsers } from './core/mesh-parsers.js';
 import { createEmitter } from './core/emitter.js';
 import { LayerController, HEAVY_BYTES } from './core/layers.js';
+import { AnatomyController, ANATOMY_VIEW_DIR } from './core/anatomy.js';
 
 // ---------------------------------------------------------------------------
 //  DOM
@@ -83,31 +83,17 @@ const emitter = createEmitter();
 // another group.
 const layers = new LayerController({ pane: stl, view, io: { fetchBuffer, isCached }, parsers, emitter });
 const sampleCtlRefs = new Map();    // sampleId -> { ox, oy, oz } offset slider inputs
-const anatomyGroup = new THREE.Group();
-let anatomyObject = null;
-const anatomyOffset = { x: 0, y: 0, z: 0 };
-let anatomyOpacity = 1;
 
-// Route the anatomy model to the correct place for the current layout:
-// its own left pane (split) or merged into the overlay workspace (overlay).
-function placeAnatomy() {
-  if (!anatomyObject) return;
-  anatomyObject.parent?.remove(anatomyObject);
-  if (view.layout === 'overlay') {
-    anatomyGroup.add(anatomyObject);
-    if (!anatomyGroup.parent) stl.root.add(anatomyGroup);
-    normalizeGroup(anatomyGroup, anatomyOffset);
-    updateBounds(stl);
-    layers.fitStl(1.7);
-    applyRenderModeToPane(stl);
-  } else {
-    if (anatomyGroup.parent) stl.root.remove(anatomyGroup);
-    glb.root.add(anatomyObject);
-    fitBox(glb, anatomyFocusBox(), 1.75, ANATOMY_VIEW_DIR);
-    updateBounds(glb);
-    applyRenderModeToPane(glb);
-  }
-}
+// The reference eye on the left pane — core/anatomy.js owns the active model,
+// the loaded scene, its per-structure meshes / styles / presets, the pane-
+// level opacity and the overlay offset. `?model=<id>` picks a registry model
+// at load; `?anatomy=<url>` still overrides the file outright, for a model
+// that isn't in the registry. Both are read once, here.
+const params = new URLSearchParams(location.search);
+const anatomy = new AnatomyController(
+  { panes: { glb, stl }, view, layers, io: { fetchBuffer, isCached }, parsers, emitter },
+  { modelId: params.get('model'), anatomyUrl: params.get('anatomy') },
+);
 
 function setLayout(mode) {
   view.layout = mode;
@@ -115,12 +101,12 @@ function setLayout(mode) {
   document.body.classList.toggle('overlay-layout', mode === 'overlay');
   $('#overlay-ctl').hidden = mode !== 'overlay';
   $('#layout-desc').textContent = mode === 'overlay' ? 'Everything superimposed & aligned' : 'Anatomy & layers side by side';
-  placeAnatomy();
+  anatomy.place();
   // Re-size + re-fit after the pane reflows to its new width (twice, to be safe:
   // once on the next frame, once after layout has fully settled).
   const resize = () => {
     mounts.glb.measure(); mounts.stl.measure();
-    if (layers.groupCount() || anatomyObject) { updateBounds(stl); layers.fitStl(mode === 'overlay' ? 1.7 : 1.45); }
+    if (layers.groupCount() || anatomy.object) { updateBounds(stl); layers.fitStl(mode === 'overlay' ? 1.7 : 1.45); }
   };
   requestAnimationFrame(resize);
   setTimeout(resize, 90);
@@ -130,26 +116,11 @@ function setLayout(mode) {
 // ---------------------------------------------------------------------------
 //  Camera framing
 // ---------------------------------------------------------------------------
-// Frame the left pane on the globe rather than on everything: the optic nerve
-// runs ~8 mm past the sclera, and fitting that whole extent shrinks the eye
-// itself. Padded a little so the nerve still reads as it leaves the frame.
-// Open on a three-quarter anterior view: the model's cornea sits at -X, so
-// looking in from -X (and a little above and to the front) puts the cornea,
-// iris and pupil facing the viewer. A straight lateral view just shows a
-// featureless white globe.
-const ANATOMY_VIEW_DIR = new THREE.Vector3(-0.72, 0.26, 0.64);
-
-function anatomyFocusBox() {
-  const box = new THREE.Box3();
-  const globe = anatomyParts.get('sclera');
-  if (globe && globe.visible) box.setFromObject(globe);
-  if (box.isEmpty() && anatomyObject) box.setFromObject(anatomyObject);
-  return box;
-}
-
+// The anatomy pane frames on the globe along ANATOMY_VIEW_DIR (see
+// core/anatomy.js for why); the workspace frames on its sample groups.
 function resetPane(pane) {
   if (pane === stl) layers.fitStl(view.layout === 'overlay' ? 1.7 : 1.45);
-  else if (anatomyParts.size) fitBox(pane, anatomyFocusBox(), 1.75, ANATOMY_VIEW_DIR);
+  else if (anatomy.parts.size) fitBox(pane, anatomy.focusBox(), 1.75, ANATOMY_VIEW_DIR);
   else if (pane.root.children.length && fitToObject(pane, pane.root)) updateBounds(pane);
 }
 function resetAll() { panes.forEach(resetPane); }
@@ -240,218 +211,49 @@ function wireLayerEvents() {
 // ---------------------------------------------------------------------------
 //  Anatomy GLB (left pane) — lazy
 // ---------------------------------------------------------------------------
-let anatomyController = null;
-
-// Which reference model the left pane is showing. `?model=<id>` picks one at
-// load; `?anatomy=<url>` still overrides the file outright, for a model that
-// isn't in the registry.
-let activeModelId = resolveModelId(new URLSearchParams(location.search).get('model'));
-const activeModel = () => modelById(activeModelId) || ANATOMY_MODELS[0];
-
-function resolveAnatomyURL() {
-  return new URLSearchParams(location.search).get('anatomy') || activeModel().url;
-}
-
-// Switch models: drop the current one entirely (geometry, materials, per-
-// structure state) and load the new one in its place.
-async function setAnatomyModel(id) {
-  if (!modelById(id) || id === activeModelId) return;
-  anatomyController?.abort();
-  activeModelId = id;
-
-  if (anatomyObject) {
-    anatomyObject.parent?.remove(anatomyObject);
-    disposeObject(anatomyObject);
-    anatomyObject = null;
-  }
-  anatomyParts.clear();
-  anatomyState.clear();
-  anatomyRowRefs.clear();
-  anatomyPreset = 'whole';
-  glb.root.clear();
-
-  const url = new URL(location.href);
-  if (id === DEFAULT_MODEL_ID) url.searchParams.delete('model');
-  else url.searchParams.set('model', id);
-  history.replaceState(null, '', url);
-
-  syncModelMenu();
-  buildAnatomyTree();
-  await loadAnatomy();
-}
-
-async function loadAnatomy() {
-  const url = resolveAnatomyURL();
-  anatomyController = new AbortController();
-  renderOverlay('loading', { pct: 0, label: 'Starting…' });
-  try {
-    const buffer = await fetchBuffer(url, {
-      signal: anatomyController.signal,
-      onProgress: ({ loaded, total, fromCache }) => {
-        if (fromCache) return renderOverlay('loading', { pct: 100, label: 'Loading from cache…' });
-        const pct = total ? Math.round((loaded / total) * 100) : 0;
-        renderOverlay('loading', { pct, label: total ? `${pct}% · ${formatBytes(loaded)} / ${formatBytes(total)}` : formatBytes(loaded) });
-      },
-    });
-    renderOverlay('loading', { pct: 100, label: 'Building model…' });
-    const scene = await parseGLTF_anatomy(buffer);
-    glb.root.clear();
-    anatomyObject = scene;
-    registerAnatomyParts(scene);
-    buildAnatomyTree();
-    placeAnatomy();
-    glbOverlay.classList.add('hidden');
-  } catch (err) {
-    if (err.name === 'AbortError') { renderOverlay('idle'); return; }
-    console.error('Anatomy GLB failed:', err);
-    renderOverlay('error', { message: err.message });
-    toast(`Couldn't load the eye-anatomy model. ${err.message}`, 'error');
-  } finally {
-    anatomyController = null;
-  }
-}
-const parseGLTF_anatomy = (buffer) => parsers.parseAnatomyGLTF(buffer);
-
-// ---------------------------------------------------------------------------
-//  Anatomy structures — per-structure meshes, colour & opacity
-// ---------------------------------------------------------------------------
-const anatomyParts = new Map();     // key -> THREE.Mesh
-const anatomyState = new Map();     // key -> { visible, color, opacity }
+// Downloading, parsing, placing and styling the reference eye lives in
+// core/anatomy.js; the app keeps the structure rows and the overlay card and
+// renders the controller's events onto them.
 const anatomyRowRefs = new Map();   // key -> { row, checkbox, swatch, colorInput, opacity }
-let anatomyPreset = 'whole';
 
-// Structure metadata for the model currently loaded.
-const anatomyMeta = (key) => structureMeta(activeModel(), key);
-
-function anatomyStateFor(key) {
-  let st = anatomyState.get(key);
-  if (!st) {
-    const d = anatomyMeta(key) || { color: 0xffffff, opacity: 1 };
-    st = { visible: true, color: d.color, opacity: d.opacity };
-    anatomyState.set(key, st);
-  }
-  return st;
-}
-
-// Match each mesh in the GLB to its structure by glTF node name. The exporter
-// names both the node and the mesh, but a loader may hang the name on either,
-// so check the mesh and then walk up to the nearest named ancestor.
-function anatomyKeyOf(mesh) {
-  for (let o = mesh; o; o = o.parent) {
-    const k = (o.name || '').trim().toLowerCase();
-    if (anatomyMeta(k)) return k;
-  }
-  return null;
-}
-
-function registerAnatomyParts(scene) {
-  anatomyParts.clear();
-  const unmatched = [];
-  scene.traverse((o) => {
-    if (!o.isMesh || o.userData.anatomyBackOf) return;
-    const key = anatomyKeyOf(o);
-    if (key) { anatomyParts.set(key, o); o.userData.anatomyKey = key; }
-    else unmatched.push(o.name || '(unnamed)');
+function wireAnatomyEvents() {
+  // A model switch: the URL mirrors the choice, the menu and the (now empty)
+  // tree follow — all before the new model starts downloading.
+  emitter.on('anatomy:model', ({ id, isDefault }) => {
+    const url = new URL(location.href);
+    if (isDefault) url.searchParams.delete('model');
+    else url.searchParams.set('model', id);
+    history.replaceState(null, '', url);
+    syncModelMenu();
+    buildAnatomyTree();
   });
-
-  if (!anatomyParts.size) {
-    // A custom model supplied via ?anatomy= won't carry our node names. Leave it
-    // alone rather than colouring it wrong — it still renders, just without the
-    // per-structure panel.
-    console.warn('Anatomy model has no recognised structure names; per-structure controls disabled.', unmatched);
-    setObjectOpacity(scene, anatomyOpacity);
-    return;
-  }
-  if (unmatched.length) console.warn('Anatomy meshes with no matching structure:', unmatched);
-
-  for (const key of anatomyParts.keys()) applyAnatomyStyle(key);
-}
-
-// These structures are nested, near-convex shells that all share a centre, so
-// three.js's per-object back-to-front sort can't order them — every shell has a
-// near half and a far half at the same object distance, and the result is a
-// flat, obviously-wrong overlap. Render each translucent shell twice instead:
-// its back faces first (outermost shell first), then its front faces (innermost
-// first). That is the correct far-to-near order for concentric shells.
-//
-//   back faces:  10 + depth   (sclera 10, choroid 11, retina 12, lens 13 …)
-//   front faces: 90 - depth   (lens 87,   retina 88,  choroid 89, sclera 90)
-//
-// Opaque structures skip all of this and just depth-test normally.
-function anatomyBackMesh(mesh) {
-  let back = mesh.userData.backMesh;
-  if (!back) {
-    back = new THREE.Mesh(mesh.geometry, makeMaterial(0xffffff, 1));
-    back.material.userData.anatomy = true;
-    back.frustumCulled = false;
-    back.userData.anatomyBackOf = mesh.userData.anatomyKey;
-    mesh.userData.backMesh = back;
-    mesh.add(back);
-  }
-  return back;
-}
-
-// Effective alpha = the structure's own opacity x the pane-level anatomy opacity.
-function applyAnatomyStyle(key) {
-  const mesh = anatomyParts.get(key);
-  if (!mesh) return;
-  const st = anatomyStateFor(key);
-  const meta = anatomyMeta(key);
-  const depth = meta?.depth ?? 0;
-  const alpha = st.opacity * anatomyOpacity;
-  const translucent = alpha < 0.999;
-
-  if (!mesh.material?.userData?.anatomy) {
-    mesh.material?.dispose?.();
-    mesh.material = makeMaterial(st.color, alpha);
-    mesh.material.userData.anatomy = true;
-  }
-  const m = mesh.material;
-  m.color.setHex(st.color);
-  m.roughness = meta?.rough ?? 0.72;
-  m.opacity = alpha;
-  m.transparent = translucent;
-  m.depthWrite = !translucent;
-  m.side = translucent ? THREE.FrontSide : THREE.DoubleSide;
-  m.needsUpdate = true;
-  mesh.renderOrder = translucent ? 90 - depth : 0;
-  mesh.visible = st.visible;
-
-  const back = anatomyBackMesh(mesh);
-  const bm = back.material;
-  bm.color.setHex(st.color);
-  bm.roughness = meta?.rough ?? 0.72;
-  bm.opacity = alpha;
-  bm.transparent = true;
-  bm.depthWrite = false;
-  bm.side = THREE.BackSide;
-  bm.needsUpdate = true;
-  back.renderOrder = 10 + depth;
-  back.visible = translucent;
-}
-function applyAnatomyStyleAll() { for (const key of anatomyParts.keys()) applyAnatomyStyle(key); }
-
-function setAnatomyPreset(name) {
-  const model = activeModel();
-  const preset = presetOf(model, name);
-  if (!preset) return;
-  anatomyPreset = name;
-  for (const s of model.structures) {
-    const st = anatomyStateFor(s.key);
-    st.visible = !preset.hidden.includes(s.key);
-    st.opacity = preset.opacity[s.key] ?? s.opacity;
-  }
-  applyAnatomyStyleAll();
-  syncAnatomyRows();
-  document.querySelectorAll('#anatomy-preset .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.preset === name));
-  const desc = $('#anatomy-preset-desc');
-  if (desc) desc.textContent = preset.desc;
-  buildCaps(glb);
+  emitter.on('anatomy:status', (s) => {
+    if (s.state === 'loaded') { glbOverlay.classList.add('hidden'); return; }
+    if (s.state === 'loading') {
+      const label = s.phase === 'start' ? 'Starting…'
+        : s.phase === 'build' ? 'Building model…'
+          : s.fromCache ? 'Loading from cache…'
+            : s.total ? `${s.pct}% · ${formatBytes(s.loaded)} / ${formatBytes(s.total)}` : formatBytes(s.loaded);
+      renderOverlay('loading', { pct: s.pct, label });
+    } else if (s.state === 'error') {
+      renderOverlay('error', { message: s.message });
+      toast(`Couldn't load the eye-anatomy model. ${s.message}`, 'error');
+    } else {
+      renderOverlay('idle');
+    }
+  });
+  emitter.on('anatomy:parts', () => buildAnatomyTree());
+  emitter.on('anatomy:preset', ({ name, preset }) => {
+    syncAnatomyRows();
+    document.querySelectorAll('#anatomy-preset .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.preset === name));
+    const desc = $('#anatomy-preset-desc');
+    if (desc) desc.textContent = preset.desc;
+  });
 }
 
 function syncAnatomyRows() {
   for (const [key, refs] of anatomyRowRefs) {
-    const st = anatomyStateFor(key);
+    const st = anatomy.stateFor(key);
     refs.checkbox.checked = st.visible;
     refs.opacity.value = String(Math.round(st.opacity * 100));
     setFill(refs.opacity);
@@ -468,15 +270,15 @@ function syncAnatomyRows() {
 async function renderOverlay(state, data = {}) {
   glbOverlay.classList.remove('hidden');
   if (state === 'idle') {
-    const cached = await isCached(resolveAnatomyURL());
+    const cached = await isCached(anatomy.url());
     glbOverlay.innerHTML = `
       <div class="overlay-card">
         <span class="ms overlay-icon">visibility</span>
-        <div class="overlay-title">${activeModel().label}</div>
-        <div class="overlay-sub">${activeModel().blurb}${cached ? ' · cached' : ''}</div>
+        <div class="overlay-title">${anatomy.model().label}</div>
+        <div class="overlay-sub">${anatomy.model().blurb}${cached ? ' · cached' : ''}</div>
         <button class="btn btn-primary" id="overlay-load">Load model</button>
       </div>`;
-    glbOverlay.querySelector('#overlay-load').onclick = loadAnatomy;
+    glbOverlay.querySelector('#overlay-load').onclick = () => anatomy.load();
   } else if (state === 'loading') {
     glbOverlay.innerHTML = `
       <div class="overlay-card">
@@ -485,7 +287,7 @@ async function renderOverlay(state, data = {}) {
         <div class="overlay-sub">${data.label || ''}</div>
         <button class="btn btn-ghost" id="overlay-cancel">Cancel</button>
       </div>`;
-    glbOverlay.querySelector('#overlay-cancel').onclick = () => anatomyController?.abort();
+    glbOverlay.querySelector('#overlay-cancel').onclick = () => anatomy.cancel();
   } else if (state === 'error') {
     glbOverlay.innerHTML = `
       <div class="overlay-card">
@@ -493,7 +295,7 @@ async function renderOverlay(state, data = {}) {
         <div class="overlay-sub">${data.message || ''}</div>
         <button class="btn btn-primary" id="overlay-retry">Try again</button>
       </div>`;
-    glbOverlay.querySelector('#overlay-retry').onclick = loadAnatomy;
+    glbOverlay.querySelector('#overlay-retry').onclick = () => anatomy.load();
   }
 }
 
@@ -513,20 +315,20 @@ function setRowState(refs, state, status) {
 function buildPresetButtons() {
   const host = $('#anatomy-preset');
   if (!host) return;
-  const presets = activeModel().presets || {};
+  const presets = anatomy.presets();
   const names = Object.keys(presets);
   host.innerHTML = '';
   host.classList.toggle('seg-2', names.length === 2);
   for (const name of names) {
     const b = document.createElement('button');
-    b.className = 'seg-btn' + (name === anatomyPreset ? ' active' : '');
+    b.className = 'seg-btn' + (name === anatomy.preset ? ' active' : '');
     b.dataset.preset = name;
     b.textContent = presets[name].label;
-    b.addEventListener('click', () => setAnatomyPreset(name));
+    b.addEventListener('click', () => anatomy.setPreset(name));
     host.appendChild(b);
   }
   const desc = $('#anatomy-preset-desc');
-  if (desc) desc.textContent = presets[anatomyPreset]?.desc || '';
+  if (desc) desc.textContent = presets[anatomy.preset]?.desc || '';
 }
 
 // The model menu lists every project surveyed for this pane. The ones with no
@@ -546,7 +348,7 @@ function buildModelMenu() {
       `<span class="model-sub">${m.unavailable || m.blurb}</span>` +
       (m.unavailable ? '' : `<span class="model-lic mono">${m.license}</span>`);
     if (!m.unavailable) {
-      item.addEventListener('click', () => { menu.classList.remove('open'); setAnatomyModel(m.id); });
+      item.addEventListener('click', () => { menu.classList.remove('open'); anatomy.setModel(m.id); });
     }
     menu.appendChild(item);
   }
@@ -554,7 +356,7 @@ function buildModelMenu() {
 }
 
 function syncModelMenu() {
-  const m = activeModel();
+  const m = anatomy.model();
   const label = $('#model-label');
   if (label) label.textContent = m.label;
   const src = $('#anatomy-source');
@@ -564,7 +366,7 @@ function syncModelMenu() {
       : `${m.source} · ${m.license}`;
   }
   document.querySelectorAll('#model-menu .model-item').forEach((b) => {
-    b.classList.toggle('active', b.dataset.modelId === activeModelId);
+    b.classList.toggle('active', b.dataset.modelId === anatomy.modelId());
   });
 }
 
@@ -577,11 +379,10 @@ function buildAnatomyTree() {
   anatomyRowRefs.clear();
 
   buildPresetButtons();
-  if (!anatomyParts.size) { const c = $('#anatomy-count'); if (c) c.textContent = '—'; return; }
+  if (!anatomy.parts.size) { const c = $('#anatomy-count'); if (c) c.textContent = '—'; return; }
 
   let lastGroup = null;
-  for (const s of activeModel().structures) {
-    if (!anatomyParts.has(s.key)) continue;
+  for (const s of anatomy.structures()) {
     if (s.group !== lastGroup) {
       const h = document.createElement('div');
       h.className = 'anat-group';
@@ -593,11 +394,11 @@ function buildAnatomyTree() {
   }
   syncAnatomyRows();
   const count = $('#anatomy-count');
-  if (count) count.textContent = anatomyParts.size;
+  if (count) count.textContent = anatomy.parts.size;
 }
 
 function buildAnatomyRow(s) {
-  const st = anatomyStateFor(s.key);
+  const st = anatomy.stateFor(s.key);
   const hex = `#${st.color.toString(16).padStart(6, '0')}`;
 
   const row = document.createElement('div');
@@ -630,22 +431,17 @@ function buildAnatomyRow(s) {
   row.appendChild(top);
 
   checkbox.addEventListener('change', () => {
-    st.visible = checkbox.checked;
-    row.classList.toggle('is-off', !st.visible);
-    applyAnatomyStyle(s.key);
-    buildCaps(glb);
+    row.classList.toggle('is-off', !checkbox.checked);
+    anatomy.setVisible(s.key, checkbox.checked);
   });
   swatch.addEventListener('click', () => colorInput.click());
   colorInput.addEventListener('input', (e) => {
     swatch.style.background = e.target.value;
-    st.color = parseInt(e.target.value.slice(1), 16);
-    applyAnatomyStyle(s.key);
-    buildCaps(glb);
+    anatomy.setColor(s.key, parseInt(e.target.value.slice(1), 16));
   });
   opacity.addEventListener('input', () => {
     setFill(opacity);
-    st.opacity = Number(opacity.value) / 100;
-    applyAnatomyStyle(s.key);
+    anatomy.setOpacity(s.key, Number(opacity.value) / 100);
   });
 
   anatomyRowRefs.set(s.key, { row, checkbox, swatch, colorInput, opacity });
@@ -963,25 +759,17 @@ function wireControls() {
 
   // Layout (split / overlay) + anatomy group controls
   $('#layout-seg').addEventListener('click', (e) => { const b = e.target.closest('.seg-btn'); if (b) setLayout(b.dataset.layout); });
-  $('#an-vis').addEventListener('change', (e) => { if (anatomyObject) anatomyObject.visible = e.target.checked; });
+  $('#an-vis').addEventListener('change', (e) => anatomy.setObjectVisible(e.target.checked));
   const modelBtn = $('#model-selector'), modelMenu = $('#model-menu');
   modelBtn?.addEventListener('click', (e) => { e.stopPropagation(); modelMenu.classList.toggle('open'); });
   document.addEventListener('click', (e) => {
     if (modelMenu?.classList.contains('open') && !modelMenu.contains(e.target)) modelMenu.classList.remove('open');
   });
   const anOp = $('#an-op'); setFill(anOp);
-  anOp.addEventListener('input', () => {
-    setFill(anOp);
-    anatomyOpacity = Number(anOp.value) / 100;
-    if (!anatomyObject) return;
-    // Scale every structure's own alpha rather than flattening them all to one
-    // value, so the model keeps its translucent-sclera / opaque-coats reading.
-    if (anatomyParts.size) applyAnatomyStyleAll();
-    else setObjectOpacity(anatomyObject, anatomyOpacity);
-  });
+  anOp.addEventListener('input', () => { setFill(anOp); anatomy.setPaneOpacity(Number(anOp.value) / 100); });
   for (const [ax, id] of [['x', '#an-ox'], ['y', '#an-oy'], ['z', '#an-oz']]) {
     const sl = $(id); setFill(sl);
-    sl.addEventListener('input', () => { setFill(sl); anatomyOffset[ax] = Number(sl.value) / 100; if (view.layout === 'overlay') { normalizeGroup(anatomyGroup, anatomyOffset); updateBounds(stl); } });
+    sl.addEventListener('input', () => { setFill(sl); anatomy.setOffset(ax, Number(sl.value) / 100); });
   }
 
   // Slice plane controls
@@ -1083,6 +871,7 @@ async function init() {
   addHUD(stl, stlPane);
   wireControls();
   wireLayerEvents();
+  wireAnatomyEvents();
   wireDivider();
   setRenderMode('surface');
   buildModelMenu();
