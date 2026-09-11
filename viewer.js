@@ -14,6 +14,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { loadCSVData, probeSizes, resolveStructure, samplesData, formatBytes } from './data-loader.js';
 import { fetchBuffer, isCached, clearCache } from './asset-loader.js';
 import { ANATOMY_MODELS, DEFAULT_MODEL_ID, modelById, resolveModelId, structureMeta, presetOf } from './core/anatomy-models.js';
+import { normalizeGroup, fitBox, fitToObject, unionBoxOfGroups } from './core/framing.js';
+import { makeMaterial, applyColor, setObjectOpacity, disposeObject } from './core/materials.js';
 
 // ---------------------------------------------------------------------------
 //  Config
@@ -43,7 +45,6 @@ let layout = 'split';                               // split | overlay
 let globalOpacity = 1;
 let autoRotate = false;
 let linkOffsets = false;                            // move all sample offsets together
-const OVERLAY_TARGET = 100;                          // groups are normalised to this size
 const clipState = {
   x: { on: false, pos: 0.5 },
   y: { on: false, pos: 0.5 },
@@ -163,37 +164,10 @@ function getSampleGroup(sampleId) {
   return g;
 }
 
-// Bounding box of a node's *content*, ignoring the node's own transform.
-function localBox(node) {
-  const p = node.position.clone(), s = node.scale.clone(), q = node.quaternion.clone();
-  node.position.set(0, 0, 0); node.scale.set(1, 1, 1); node.quaternion.identity();
-  node.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(node);
-  node.position.copy(p); node.scale.copy(s); node.quaternion.copy(q);
-  node.updateMatrixWorld(true);
-  return box;
-}
-
-// Normalise a group to OVERLAY_TARGET, centre it at the origin, then apply the
-// group's offset (a fraction of the target size) so it can be stacked/separated.
-function normalizeGroupNode(node, offset = { x: 0, y: 0, z: 0 }) {
-  const box = localBox(node);
-  if (box.isEmpty()) return;
-  const c = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
-  const s = OVERLAY_TARGET / (Math.max(size.x, size.y, size.z) || 1);
-  node.scale.setScalar(s);
-  node.position.set(
-    offset.x * OVERLAY_TARGET - s * c.x,
-    offset.y * OVERLAY_TARGET - s * c.y,
-    offset.z * OVERLAY_TARGET - s * c.z
-  );
-}
-
 function normalizeSample(sampleId) {
   const g = sampleGroups.get(sampleId);
   const sample = findSample(sampleId);
-  if (g && sample) normalizeGroupNode(g, sample.offset);
+  if (g && sample) normalizeGroup(g, sample.offset);
 }
 
 // Set one sample's offset on an axis, syncing its slider UI + 3D group.
@@ -219,7 +193,7 @@ function placeAnatomy() {
   if (layout === 'overlay') {
     anatomyGroup.add(anatomyObject);
     if (!anatomyGroup.parent) stl.root.add(anatomyGroup);
-    normalizeGroupNode(anatomyGroup, anatomyOffset);
+    normalizeGroup(anatomyGroup, anatomyOffset);
     updateBounds(stl);
     fitStl(1.7);
     applyRenderModeToPane(stl);
@@ -253,45 +227,9 @@ function setLayout(mode) {
 // ---------------------------------------------------------------------------
 //  Camera framing
 // ---------------------------------------------------------------------------
-function fitBox(pane, box, offset = 1.45, dir = null) {
-  if (box.isEmpty()) return;
-  const size = box.getSize(new THREE.Vector3());
-  const center = box.getCenter(new THREE.Vector3());
-  const maxDim = Math.max(size.x, size.y, size.z) || 1;
-
-  // Fit the model's enclosing sphere against whichever field of view is the
-  // tighter one. Honouring the *horizontal* FOV matters because these panes are
-  // tall and narrow: fitting only the vertical FOV — as this did originally —
-  // crops anything wider than it is tall, like the eye plus its optic nerve.
-  // `offset` keeps its old meaning, 1.45 being a snug fit.
-  const vFov = pane.camera.fov * (Math.PI / 180);
-  const hFov = 2 * Math.atan(Math.tan(vFov / 2) * (pane.camera.aspect || 1));
-  const dist = ((maxDim / 2) / Math.sin(Math.min(vFov, hFov) / 2)) * (offset / 1.45);
-
-  pane.camera.near = Math.max(maxDim / 1000, 0.001);
-  pane.camera.far = maxDim * 1000;
-  pane.camera.updateProjectionMatrix();
-  pane.controls.target.copy(center);
-  pane.camera.position.copy(center).add((dir ? dir.clone().normalize() : new THREE.Vector3(0, 0, 1)).multiplyScalar(dist));
-  pane.controls.update();
-  pane.defaultDist = dist;
-}
-
-function fitToObject(pane, object, offset = 1.45) {
-  const box = new THREE.Box3().setFromObject(object);
-  if (box.isEmpty()) return;
-  fitBox(pane, box, offset);
-  updateBounds(pane);
-}
-
 // The STL workspace is framed on its sample groups (the subject); the anatomy,
 // which has far-reaching muscles/optic nerve, is context and may spill past.
-function stlWorkspaceBox() {
-  const box = new THREE.Box3();
-  for (const g of sampleGroups.values()) if (g.visible && g.children.length) box.expandByObject(g);
-  if (box.isEmpty()) box.setFromObject(stl.root);
-  return box;
-}
+function stlWorkspaceBox() { return unionBoxOfGroups(sampleGroups.values(), stl.root); }
 // Frame the left pane on the globe rather than on everything: the optic nerve
 // runs ~8 mm past the sclera, and fitting that whole extent shrinks the eye
 // itself. Padded a little so the nerve still reads as it leaves the frame.
@@ -319,7 +257,7 @@ function fitStl(offset = 1.45) {
 function resetPane(pane) {
   if (pane === stl) fitStl(layout === 'overlay' ? 1.7 : 1.45);
   else if (anatomyParts.size) fitBox(pane, anatomyFocusBox(), 1.75, ANATOMY_VIEW_DIR);
-  else if (pane.root.children.length) fitToObject(pane, pane.root);
+  else if (pane.root.children.length && fitToObject(pane, pane.root)) updateBounds(pane);
 }
 function resetAll() { panes.forEach(resetPane); }
 
@@ -527,27 +465,6 @@ function setSync(on) {
 // ---------------------------------------------------------------------------
 //  Materials
 // ---------------------------------------------------------------------------
-function makeMaterial(colorHex, opacity) {
-  return new THREE.MeshStandardMaterial({
-    color: colorHex, roughness: 0.82, metalness: 0.0,
-    transparent: opacity < 1, opacity, depthWrite: opacity >= 1, side: THREE.DoubleSide,
-  });
-}
-function applyColor(object, colorHex) {
-  object.traverse((c) => { if (c.isMesh && c.material) c.material.color.setHex(colorHex); });
-}
-function setObjectOpacity(object, o) {
-  object.traverse((c) => {
-    if (c.isMesh && c.material && !c.userData.noClip) {
-      c.material.opacity = o;
-      c.material.transparent = o < 1;
-      c.material.depthWrite = o >= 1;
-      c.renderOrder = o < 1 ? 1 : 0;
-      c.material.needsUpdate = true;
-    }
-  });
-}
-
 // Effective opacity = per-layer × per-sample × global.
 function reapplyOpacity(structure) {
   const obj = featureObjects.get(structure.id);
@@ -576,11 +493,6 @@ function solidVariant(path) {
 function effectivePath(structure) {
   if (solidFill) { const v = solidVariant(structure.path); if (v) return v; }
   return structure.path;
-}
-function disposeObject(obj) {
-  obj.traverse((c) => {
-    if (c.isMesh) { c.geometry?.dispose(); if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose()); else c.material?.dispose(); }
-  });
 }
 // Reload every currently-loaded F10 coat from the active variant, preserving
 // each row's visibility. Called when the Solid-fill toggle flips.
@@ -1445,7 +1357,7 @@ function wireControls() {
   });
   for (const [ax, id] of [['x', '#an-ox'], ['y', '#an-oy'], ['z', '#an-oz']]) {
     const sl = $(id); setFill(sl);
-    sl.addEventListener('input', () => { setFill(sl); anatomyOffset[ax] = Number(sl.value) / 100; if (layout === 'overlay') { normalizeGroupNode(anatomyGroup, anatomyOffset); updateBounds(stl); } });
+    sl.addEventListener('input', () => { setFill(sl); anatomyOffset[ax] = Number(sl.value) / 100; if (layout === 'overlay') { normalizeGroup(anatomyGroup, anatomyOffset); updateBounds(stl); } });
   }
 
   // Slice plane controls
