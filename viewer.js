@@ -22,6 +22,7 @@ import {
   updateBounds as coreUpdateBounds, updateClips as coreUpdateClips,
   applyRenderModeToPane as coreApplyRenderModeToPane, buildCaps as coreBuildCaps,
 } from './core/clipping.js';
+import { CameraSync } from './core/orientation.js';
 
 // ---------------------------------------------------------------------------
 //  Config
@@ -226,37 +227,13 @@ function setRenderMode(mode) {
 // ---------------------------------------------------------------------------
 //  Sync (mirror orbit orientation only)
 // ---------------------------------------------------------------------------
-let syncEnabled = false, isSyncing = false;
-function applyOrientation(pane, az, polar) {
-  const dist = pane.controls.getDistance();
-  const t = pane.controls.target;
-  const sp = Math.sin(polar);
-  pane.camera.position.copy(t).add(new THREE.Vector3(sp * Math.sin(az), Math.cos(polar), sp * Math.cos(az)).multiplyScalar(dist));
-  pane.camera.lookAt(t);
-  pane.controls.update();
-}
-function mirror(from, to) {
-  if (isSyncing) return;
-  isSyncing = true;
-  applyOrientation(to, from.controls.getAzimuthalAngle(), from.controls.getPolarAngle());
-  isSyncing = false;
-}
-const glbToStl = () => mirror(glb, stl);
-const stlToGlb = () => mirror(stl, glb);
+const sync = new CameraSync(glb, stl);
 function setSync(on) {
-  syncEnabled = on;
   btnSync.setAttribute('aria-pressed', String(on));
   document.body.classList.toggle('synced', on);
   const label = btnSync.querySelector('.sync-toggle-label');
   if (label) label.textContent = on ? 'Synced' : 'Sync views';
-  if (on) {
-    glb.controls.addEventListener('change', glbToStl);
-    stl.controls.addEventListener('change', stlToGlb);
-    mirror(glb, stl);
-  } else {
-    glb.controls.removeEventListener('change', glbToStl);
-    stl.controls.removeEventListener('change', stlToGlb);
-  }
+  if (on) sync.link(); else sync.unlink();
 }
 
 // ---------------------------------------------------------------------------
@@ -1086,7 +1063,7 @@ function setAutoRotate(on) {
 //  Controls wiring
 // ---------------------------------------------------------------------------
 function wireControls() {
-  btnSync.addEventListener('click', () => setSync(!syncEnabled));
+  btnSync.addEventListener('click', () => setSync(!sync.enabled));
   $('#btn-reset').addEventListener('click', resetAll);
   $('#btn-fit').addEventListener('click', resetAll);
 
