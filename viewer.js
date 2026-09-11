@@ -9,10 +9,11 @@ import * as THREE from 'three';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { loadCSVData, probeSizes, resolveStructure, samplesData, formatBytes } from './data-loader.js';
 import { fetchBuffer, isCached, clearCache } from './asset-loader.js';
+import { browserAdapters, mountPane } from './app/browser-adapters.js';
+import { createPane } from './core/pane.js';
 import { ANATOMY_MODELS, DEFAULT_MODEL_ID, modelById, resolveModelId, structureMeta, presetOf } from './core/anatomy-models.js';
 import { normalizeGroup, fitBox, fitToObject, unionBoxOfGroups } from './core/framing.js';
 import { makeMaterial, applyColor, setObjectOpacity, disposeObject } from './core/materials.js';
@@ -26,7 +27,6 @@ import {
 //  Config
 // ---------------------------------------------------------------------------
 const HEAVY_BYTES = 400 * 1024 * 1024;
-const PLANE_COLORS = { x: 0x7bd88f, y: 0xebb46e, z: 0x78aaeb };  // sagittal / axial / coronal
 
 // ---------------------------------------------------------------------------
 //  DOM
@@ -65,88 +65,16 @@ gltfLoader.setDRACOLoader(dracoLoader);
 const stlLoader = new STLLoader();
 
 // ---------------------------------------------------------------------------
-//  Pane factory
+//  Panes
 // ---------------------------------------------------------------------------
-function createPane(mountEl) {
-  const scene = new THREE.Scene();
-
-  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-  scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x141820, 0.6));
-  const key = new THREE.DirectionalLight(0xffffff, 1.05); key.position.set(1, 1.2, 1);
-  const fill = new THREE.DirectionalLight(0xbcd0ff, 0.45); fill.position.set(-1, -0.6, -0.8);
-  scene.add(key, fill);
-
-  const camera = new THREE.PerspectiveCamera(52, 1, 0.01, 1e7);
-  camera.position.set(0, 0, 100);
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, stencil: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.localClippingEnabled = true;
-  mountEl.appendChild(renderer.domElement);
-
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-  controls.autoRotateSpeed = 1.1;
-
-  const root = new THREE.Group();
-  scene.add(root);
-
-  // Slice helpers (clip planes, plane quads, bounding box, grid).
-  const clipPlanes = {
-    x: new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0),
-    y: new THREE.Plane(new THREE.Vector3(0, -1, 0), 0),
-    z: new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),
-  };
-  const sliceGroup = new THREE.Group(); sliceGroup.visible = false; scene.add(sliceGroup);
-  const sliceQuads = {};
-  for (const ax of ['x', 'y', 'z']) {
-    const mat = new THREE.MeshBasicMaterial({ color: PLANE_COLORS[ax], transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false });
-    const q = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-    q.userData.noClip = true;
-    if (ax === 'x') q.rotation.y = Math.PI / 2;
-    if (ax === 'y') q.rotation.x = Math.PI / 2;
-    sliceQuads[ax] = q; sliceGroup.add(q);
-  }
-  const boxHelper = new THREE.LineSegments(
-    new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
-    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.12 })
-  );
-  boxHelper.userData.noClip = true; boxHelper.visible = false; scene.add(boxHelper);
-
-  const grid = new THREE.GridHelper(1, 20, 0x2a3340, 0x1a2029);
-  grid.visible = false; grid.userData.noClip = true; scene.add(grid);
-
-  // Holds stencil-cap geometry that fills the sliced cross-sections (see buildCaps).
-  const capGroup = new THREE.Group(); capGroup.userData.noClip = true; scene.add(capGroup);
-
-  function size() {
-    const w = mountEl.clientWidth || 1, h = mountEl.clientHeight || 1;
-    renderer.setSize(w, h, false);
-    camera.aspect = w / h; camera.updateProjectionMatrix();
-  }
-  size();
-  new ResizeObserver(size).observe(mountEl);
-
-  return {
-    mountEl, scene, camera, renderer, controls, root,
-    clipPlanes, activeClips: [], sliceGroup, sliceQuads, boxHelper, grid, capGroup,
-    bounds: new THREE.Box3(), size, defaultDist: 100, capsEnabled: false,
-  };
-}
-
-const glb = createPane(glbPane);
-const stl = createPane(stlPane);
-stl.capsEnabled = true;   // the segmented-coat pane gets solid cross-section caps when sliced
-
-// The shared key light sits behind and to the right of the subject, which suits
-// the µCT coats but leaves the anatomy's interior — iris, lens, the inside of
-// the cornea — lit only by ambient, washing their colour out to grey. Give the
-// anatomy pane a soft headlight that tracks its camera, so whichever side you
-// orbit to is the side that's lit.
-glb.headLight = new THREE.DirectionalLight(0xfff6e8, 0.55);
-glb.scene.add(glb.headLight);
+// The scene / camera / slice-helper half of a pane is built by core/pane.js;
+// the WebGL renderer, DOM-wired OrbitControls and ResizeObserver come from
+// app/browser-adapters.js. The anatomy pane gets a camera-tracking headlight
+// (animate moves it); the segmented-coat pane gets solid cross-section caps
+// when sliced.
+const glb = createPane({ id: 'glb', headLight: true, adapters: browserAdapters(glbPane) });
+const stl = createPane({ id: 'stl', capsEnabled: true, adapters: browserAdapters(stlPane) });
+const mounts = { glb: mountPane(glb, glbPane), stl: mountPane(stl, stlPane) };
 const panes = [glb, stl];
 
 // The STL pane is the "overlay workspace": every sample is a normalised group
@@ -218,7 +146,7 @@ function setLayout(mode) {
   // Re-size + re-fit after the pane reflows to its new width (twice, to be safe:
   // once on the next frame, once after layout has fully settled).
   const resize = () => {
-    glb.size(); stl.size();
+    mounts.glb.measure(); mounts.stl.measure();
     if (sampleGroups.size || anatomyObject) { updateBounds(stl); fitStl(mode === 'overlay' ? 1.7 : 1.45); }
   };
   requestAnimationFrame(resize);
@@ -1313,8 +1241,8 @@ function animate(now) {
     glb.headLight.target.position.copy(glb.controls.target);
     glb.headLight.target.updateMatrixWorld();
   }
-  glb.renderer.render(glb.scene, glb.camera);
-  stl.renderer.render(stl.scene, stl.camera);
+  glb.render();
+  stl.render();
 
   frames++;
   if (now - fpsT >= 500) { fps = Math.round((frames * 1000) / (now - fpsT)); frames = 0; fpsT = now; }
