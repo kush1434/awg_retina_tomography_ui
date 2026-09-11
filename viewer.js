@@ -16,6 +16,11 @@ import { fetchBuffer, isCached, clearCache } from './asset-loader.js';
 import { ANATOMY_MODELS, DEFAULT_MODEL_ID, modelById, resolveModelId, structureMeta, presetOf } from './core/anatomy-models.js';
 import { normalizeGroup, fitBox, fitToObject, unionBoxOfGroups } from './core/framing.js';
 import { makeMaterial, applyColor, setObjectOpacity, disposeObject } from './core/materials.js';
+import {
+  createClipState, clearCaps,
+  updateBounds as coreUpdateBounds, updateClips as coreUpdateClips,
+  applyRenderModeToPane as coreApplyRenderModeToPane, buildCaps as coreBuildCaps,
+} from './core/clipping.js';
 
 // ---------------------------------------------------------------------------
 //  Config
@@ -40,17 +45,14 @@ const btnSync = $('#btn-sync');
 // ---------------------------------------------------------------------------
 //  Global view state
 // ---------------------------------------------------------------------------
-let renderMode = 'surface';                         // surface | wireframe | slices
-let layout = 'split';                               // split | overlay
-let globalOpacity = 1;
-let autoRotate = false;
-let linkOffsets = false;                            // move all sample offsets together
-const clipState = {
-  x: { on: false, pos: 0.5 },
-  y: { on: false, pos: 0.5 },
-  z: { on: false, pos: 0.5 },
-  flip: false,
-  showPlanes: true,
+const view = {
+  renderMode: 'surface',                            // surface | wireframe | slices
+  layout: 'split',                                  // split | overlay
+  globalOpacity: 1,
+  autoRotate: false,
+  linkOffsets: false,                               // move all sample offsets together
+  solidFill: false,                                 // default OFF: show the original individual coats; toggle on for the filled+capped view
+  clipState: createClipState(),
 };
 
 // ---------------------------------------------------------------------------
@@ -180,7 +182,7 @@ function setSampleOffset(sample, ax, value) {
 
 // Apply an offset to the edited sample, or — when linked — to every sample.
 function offsetChanged(sample, ax, value) {
-  if (linkOffsets) samplesData.samples.forEach((s) => setSampleOffset(s, ax, value));
+  if (view.linkOffsets) samplesData.samples.forEach((s) => setSampleOffset(s, ax, value));
   else setSampleOffset(sample, ax, value);
   updateBounds(stl);
 }
@@ -190,7 +192,7 @@ function offsetChanged(sample, ax, value) {
 function placeAnatomy() {
   if (!anatomyObject) return;
   anatomyObject.parent?.remove(anatomyObject);
-  if (layout === 'overlay') {
+  if (view.layout === 'overlay') {
     anatomyGroup.add(anatomyObject);
     if (!anatomyGroup.parent) stl.root.add(anatomyGroup);
     normalizeGroup(anatomyGroup, anatomyOffset);
@@ -207,7 +209,7 @@ function placeAnatomy() {
 }
 
 function setLayout(mode) {
-  layout = mode;
+  view.layout = mode;
   document.querySelectorAll('#layout-seg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.layout === mode));
   document.body.classList.toggle('overlay-layout', mode === 'overlay');
   $('#overlay-ctl').hidden = mode !== 'overlay';
@@ -255,7 +257,7 @@ function fitStl(offset = 1.45) {
 }
 
 function resetPane(pane) {
-  if (pane === stl) fitStl(layout === 'overlay' ? 1.7 : 1.45);
+  if (pane === stl) fitStl(view.layout === 'overlay' ? 1.7 : 1.45);
   else if (anatomyParts.size) fitBox(pane, anatomyFocusBox(), 1.75, ANATOMY_VIEW_DIR);
   else if (pane.root.children.length && fitToObject(pane, pane.root)) updateBounds(pane);
 }
@@ -264,155 +266,22 @@ function resetAll() { panes.forEach(resetPane); }
 // ---------------------------------------------------------------------------
 //  Slicing / clipping
 // ---------------------------------------------------------------------------
-function updateBounds(pane) {
-  if (!pane.root.children.length) return;
-  pane.bounds.setFromObject(pane.root);
-  const size = pane.bounds.getSize(new THREE.Vector3());
-  const center = pane.bounds.getCenter(new THREE.Vector3());
-
-  // bounding-cube wireframe
-  pane.boxHelper.scale.copy(size); pane.boxHelper.position.copy(center);
-  // grid floor at the base
-  const gmax = Math.max(size.x, size.z) * 1.2 || 1;
-  pane.grid.scale.set(gmax, 1, gmax);
-  pane.grid.position.set(center.x, pane.bounds.min.y, center.z);
-
-  updateClips(pane);
-}
-
-function updateClips(pane) {
-  if (pane.bounds.isEmpty()) return;
-  const { min, max } = pane.bounds;
-  const center = pane.bounds.getCenter(new THREE.Vector3());
-  const size = pane.bounds.getSize(new THREE.Vector3());
-  const sign = clipState.flip ? 1 : -1;
-  const axes = ['x', 'y', 'z'];
-  pane.activeClips = [];
-
-  for (const ax of axes) {
-    const pos = min[ax] + (max[ax] - min[ax]) * clipState[ax].pos;
-    const plane = pane.clipPlanes[ax];
-    plane.normal.set(ax === 'x' ? sign : 0, ax === 'y' ? sign : 0, ax === 'z' ? sign : 0);
-    plane.constant = sign === -1 ? pos : -pos;
-    if (clipState[ax].on) pane.activeClips.push(plane);
-
-    // position the visual quad at the cut
-    const q = pane.sliceQuads[ax];
-    if (ax === 'x') { q.position.set(pos, center.y, center.z); q.scale.set(size.z, size.y, 1); }
-    if (ax === 'y') { q.position.set(center.x, pos, center.z); q.scale.set(size.x, size.z, 1); }
-    if (ax === 'z') { q.position.set(center.x, center.y, pos); q.scale.set(size.x, size.y, 1); }
-    q.visible = clipState[ax].on;
-  }
-  applyRenderModeToPane(pane);
-}
-
-function applyRenderModeToPane(pane) {
-  const slicing = renderMode === 'slices';
-  pane.sliceGroup.visible = slicing && clipState.showPlanes;
-  pane.boxHelper.visible = slicing && !pane.bounds.isEmpty();
-  pane.scene.traverse((o) => {
-    if (!o.isMesh || o.userData.noClip) return;
-    const mats = Array.isArray(o.material) ? o.material : [o.material];
-    for (const m of mats) {
-      if (!m) continue;
-      m.wireframe = renderMode === 'wireframe';
-      m.clippingPlanes = slicing && pane.activeClips.length ? pane.activeClips : null;
-      m.clipIntersection = false;
-      // Anatomy shells manage their own side: translucent ones are split into a
-      // BackSide and a FrontSide pass so they blend in the correct order.
-      if (!m.userData?.anatomy) m.side = THREE.DoubleSide;
-      m.needsUpdate = true;
-    }
-  });
-  buildCaps(pane);
-}
+// The clip-plane, slice-quad, render-mode and stencil-cap logic lives in
+// core/clipping.js and takes the live `view` state explicitly; these shims keep
+// the call sites below reading as they always have.
+const updateBounds = (pane) => coreUpdateBounds(pane, view);
+const updateClips = (pane) => coreUpdateClips(pane, view);
+const applyRenderModeToPane = (pane) => coreApplyRenderModeToPane(pane, view);
+const buildCaps = (pane) => coreBuildCaps(pane, view);
 function applyRenderModeAll() { panes.forEach(applyRenderModeToPane); }
 
-// ---------------------------------------------------------------------------
-//  Clip-plane capping
-// ---------------------------------------------------------------------------
-// A sliced mesh is a hollow open shell: at the cut you see straight through it,
-// so adjacent coats read as separated by dark seams. For the (common) single
-// active plane, fill each coat's cross-section with a stencil-masked colored
-// quad so the cut renders as a solid, gap-free surface. Standard three.js
-// stencil-cap technique (back faces increment, front faces decrement, cap drawn
-// where the count != 0), one group per coat so each keeps its own colour.
-const _capQuadGeom = new THREE.PlaneGeometry(1, 1);
-function stencilMat(side, op, plane) {
-  const m = new THREE.MeshBasicMaterial();
-  m.depthWrite = false; m.depthTest = false; m.colorWrite = false;
-  m.side = side; m.clippingPlanes = [plane];
-  m.stencilWrite = true; m.stencilFunc = THREE.AlwaysStencilFunc;
-  m.stencilFail = op; m.stencilZFail = op; m.stencilZPass = op;
-  return m;
-}
-function clearCaps(pane) {
-  const g = pane.capGroup;
-  if (!g) return;
-  for (const c of g.children) {
-    const ms = Array.isArray(c.material) ? c.material : [c.material];
-    ms.forEach((m) => m && m.dispose());
-  }
-  g.clear();
-}
-function buildCaps(pane) {
-  if (!pane.capsEnabled) return;
-  clearCaps(pane);
-  // Caps belong to Solid fill; with it off the slice view stays the original
-  // uncapped coats. Cap only the single-plane case (the default); >1 plane uncapped.
-  if (!solidFill || renderMode !== 'slices' || pane.activeClips.length !== 1) return;
-  const plane = pane.activeClips[0];
-
-  pane.root.updateWorldMatrix(true, true);
-  const coats = [];
-  pane.root.traverse((o) => {
-    if (!o.isMesh || o.userData.noClip || !o.geometry || !o.material) return;
-    if (o.userData.anatomyBackOf) return;   // duplicate of its parent's geometry
-    let vis = o.visible, p = o.parent;
-    while (vis && p) { vis = p.visible; p = p.parent; }
-    if (!vis) return;
-    const mat = Array.isArray(o.material) ? o.material[0] : o.material;
-    coats.push({ mesh: o, color: mat.color });
-  });
-  if (!coats.length) return;
-
-  const size = pane.bounds.getSize(new THREE.Vector3());
-  const capSize = (Math.max(size.x, size.y, size.z) || 1) * 2.4;
-  const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), plane.normal.clone().normalize());
-  const pos = plane.normal.clone().multiplyScalar(-plane.constant);
-
-  let order = 100;
-  for (const { mesh, color } of coats) {
-    for (const [side, op] of [[THREE.BackSide, THREE.IncrementWrapStencilOp], [THREE.FrontSide, THREE.DecrementWrapStencilOp]]) {
-      const s = new THREE.Mesh(mesh.geometry, stencilMat(side, op, plane));
-      s.matrixAutoUpdate = false; s.matrixWorldAutoUpdate = false;
-      s.matrix.copy(mesh.matrixWorld); s.matrixWorld.copy(mesh.matrixWorld);
-      s.renderOrder = order; s.frustumCulled = false; s.userData.noClip = true;
-      pane.capGroup.add(s);
-    }
-    const capMat = new THREE.MeshBasicMaterial({ color: color.clone(), side: THREE.DoubleSide });
-    capMat.stencilWrite = true; capMat.stencilRef = 0; capMat.stencilFunc = THREE.NotEqualStencilFunc;
-    capMat.stencilFail = THREE.ReplaceStencilOp; capMat.stencilZFail = THREE.ReplaceStencilOp; capMat.stencilZPass = THREE.ReplaceStencilOp;
-    capMat.polygonOffset = true; capMat.polygonOffsetFactor = -order; capMat.polygonOffsetUnits = -1;
-    const cap = new THREE.Mesh(_capQuadGeom, capMat);
-    cap.scale.set(capSize, capSize, 1);
-    cap.quaternion.copy(quat);
-    cap.position.copy(pos);
-    cap.renderOrder = order + 1;
-    cap.frustumCulled = false; cap.userData.noClip = true;
-    cap.onAfterRender = (r) => r.clearStencil();
-    pane.capGroup.add(cap);
-    order += 3;
-  }
-}
-
 function setRenderMode(mode) {
-  renderMode = mode;
+  view.renderMode = mode;
   $('#render-mode').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
   $('#slice-sec').hidden = mode !== 'slices';
   // Entering Slices with nothing cut shows no slice — enable one for discoverability.
-  if (mode === 'slices' && !clipState.x.on && !clipState.y.on && !clipState.z.on) {
-    clipState.x.on = true;
+  if (mode === 'slices' && !view.clipState.x.on && !view.clipState.y.on && !view.clipState.z.on) {
+    view.clipState.x.on = true;
     const cb = document.querySelector('.slice-toggle input[data-axis="x"]');
     if (cb) cb.checked = true;
     panes.forEach(updateClips);
@@ -470,7 +339,7 @@ function reapplyOpacity(structure) {
   const obj = featureObjects.get(structure.id);
   if (!obj) return;
   const sample = findSample(structure.sampleId);
-  setObjectOpacity(obj, structure.opacity * (sample?.opacity ?? 1) * globalOpacity);
+  setObjectOpacity(obj, structure.opacity * (sample?.opacity ?? 1) * view.globalOpacity);
 }
 
 // ---------------------------------------------------------------------------
@@ -483,7 +352,6 @@ const inFlight = new Map();
 // "Solid fill" mode: swap the F10 ocular coats for their solid-slab variant,
 // which fills each coat inward to the next coat (no gaps, no hollow shells).
 // The variant meshes ship alongside the normal ones under optimized/<dir>_solid/.
-let solidFill = false;  // default OFF: show the original individual coats; toggle on for the filled+capped view
 function solidVariant(path) {
   // Map any F10 coat path (remote HF original or local optimized) to the
   // locally-shipped solid-fill slab, so the toggle works regardless of source.
@@ -491,7 +359,7 @@ function solidVariant(path) {
   return m ? `optimized/F10_layers_solid/${m[1]}` : null;
 }
 function effectivePath(structure) {
-  if (solidFill) { const v = solidVariant(structure.path); if (v) return v; }
+  if (view.solidFill) { const v = solidVariant(structure.path); if (v) return v; }
   return structure.path;
 }
 // Reload every currently-loaded F10 coat from the active variant, preserving
@@ -545,7 +413,7 @@ async function loadLayer(structure) {
     reapplyOpacity(structure);
 
     updateBounds(stl);
-    if (!stlFitted || isNewGroup) { fitStl(layout === 'overlay' ? 1.7 : 1.45); stlFitted = true; }
+    if (!stlFitted || isNewGroup) { fitStl(view.layout === 'overlay' ? 1.7 : 1.45); stlFitted = true; }
     applyRenderModeToPane(stl);
     refreshStlEmpty();
     setRowState(refs, 'loaded', (await isCached(url)) ? 'Loaded · cached' : 'Loaded');
@@ -1078,7 +946,7 @@ function buildSampleControls(sample) {
   sampleCtlRefs.set(sample.id, refs);
 
   wrap.querySelector('.s-reset').addEventListener('click', () => {
-    const targets = linkOffsets ? samplesData.samples : [sample];
+    const targets = view.linkOffsets ? samplesData.samples : [sample];
     for (const s of targets) for (const ax of ['x', 'y', 'z']) setSampleOffset(s, ax, 0);
     updateBounds(stl);
   });
@@ -1272,7 +1140,7 @@ function addHUD(pane, paneEl) {
     <button class="icon-btn" data-act="auto" title="Auto-rotate"><span class="ms">autorenew</span></button>
     <button class="icon-btn" data-act="reset" title="Reset view"><span class="ms">restart_alt</span></button>
     <button class="icon-btn" data-act="fit" title="Fit view"><span class="ms">center_focus_strong</span></button>`;
-  bar.querySelector('[data-act="auto"]').onclick = () => setAutoRotate(!autoRotate);
+  bar.querySelector('[data-act="auto"]').onclick = () => setAutoRotate(!view.autoRotate);
   bar.querySelector('[data-act="reset"]').onclick = () => resetPane(pane);
   bar.querySelector('[data-act="fit"]').onclick = () => resetPane(pane);
   frag.appendChild(bar);
@@ -1280,7 +1148,7 @@ function addHUD(pane, paneEl) {
 }
 
 function setAutoRotate(on) {
-  autoRotate = on;
+  view.autoRotate = on;
   panes.forEach((p) => { p.controls.autoRotate = on; });
   $('#auto-rotate').checked = on;
   document.querySelectorAll('.hud-toolbar [data-act="auto"]').forEach((b) => b.setAttribute('aria-pressed', String(on)));
@@ -1322,7 +1190,7 @@ function wireControls() {
   });
 
   $('#solid-fill').addEventListener('change', (e) => {
-    solidFill = e.target.checked;
+    view.solidFill = e.target.checked;
     reloadFillVariants();
   });
 
@@ -1357,38 +1225,38 @@ function wireControls() {
   });
   for (const [ax, id] of [['x', '#an-ox'], ['y', '#an-oy'], ['z', '#an-oz']]) {
     const sl = $(id); setFill(sl);
-    sl.addEventListener('input', () => { setFill(sl); anatomyOffset[ax] = Number(sl.value) / 100; if (layout === 'overlay') { normalizeGroup(anatomyGroup, anatomyOffset); updateBounds(stl); } });
+    sl.addEventListener('input', () => { setFill(sl); anatomyOffset[ax] = Number(sl.value) / 100; if (view.layout === 'overlay') { normalizeGroup(anatomyGroup, anatomyOffset); updateBounds(stl); } });
   }
 
   // Slice plane controls
   document.querySelectorAll('.slice-toggle input').forEach((cb) => {
-    cb.addEventListener('change', () => { clipState[cb.dataset.axis].on = cb.checked; panes.forEach(updateClips); });
+    cb.addEventListener('change', () => { view.clipState[cb.dataset.axis].on = cb.checked; panes.forEach(updateClips); });
   });
   document.querySelectorAll('.slice-row .slider').forEach((sl) => {
     setFill(sl);
     sl.addEventListener('input', () => {
       setFill(sl);
-      clipState[sl.dataset.axis].pos = Number(sl.value) / 100;
+      view.clipState[sl.dataset.axis].pos = Number(sl.value) / 100;
       $(`.slice-val[data-axis="${sl.dataset.axis}"]`).textContent = `${sl.value}%`;
       panes.forEach(updateClips);
     });
   });
-  $('#slice-flip').addEventListener('change', (e) => { clipState.flip = e.target.checked; panes.forEach(updateClips); });
-  $('#slice-show').addEventListener('change', (e) => { clipState.showPlanes = e.target.checked; applyRenderModeAll(); });
+  $('#slice-flip').addEventListener('change', (e) => { view.clipState.flip = e.target.checked; panes.forEach(updateClips); });
+  $('#slice-show').addEventListener('change', (e) => { view.clipState.showPlanes = e.target.checked; applyRenderModeAll(); });
 
   // Display controls
   const op = $('#global-opacity'); setFill(op);
   op.addEventListener('input', (e) => {
     setFill(e.target);
-    globalOpacity = Number(e.target.value) / 100;
+    view.globalOpacity = Number(e.target.value) / 100;
     $('#opacity-val').textContent = `${e.target.value}%`;
     for (const id of featureObjects.keys()) { const st = findStructure(id); if (st) reapplyOpacity(st); }
   });
   $('#auto-rotate').addEventListener('change', (e) => setAutoRotate(e.target.checked));
   $('#show-grid').addEventListener('change', (e) => panes.forEach((p) => { p.grid.visible = e.target.checked && !p.bounds.isEmpty(); }));
   $('#link-offsets').addEventListener('change', (e) => {
-    linkOffsets = e.target.checked;
-    if (linkOffsets) {   // snap every sample to the first sample's offset
+    view.linkOffsets = e.target.checked;
+    if (view.linkOffsets) {   // snap every sample to the first sample's offset
       const base = samplesData.samples[0]?.offset || { x: 0, y: 0, z: 0 };
       for (const ax of ['x', 'y', 'z']) samplesData.samples.forEach((s) => setSampleOffset(s, ax, base[ax]));
       updateBounds(stl);
