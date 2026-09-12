@@ -11,9 +11,7 @@
 import { loadCSVData, probeSizes, resolveStructure, samplesData, formatBytes } from './data-loader.js';
 import { fetchBuffer, isCached, clearCache } from './asset-loader.js';
 import { browserAdapters, mountPane } from './app/browser-adapters.js';
-import { createWorkbench } from './core/workbench.js';
-import { ANATOMY_MODELS } from './core/anatomy-models.js';
-import { HEAVY_BYTES } from './core/layers.js';
+import { createWorkbench, ANATOMY_MODELS, HEAVY_BYTES } from './core/index.js';
 
 // ---------------------------------------------------------------------------
 //  DOM

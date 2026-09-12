@@ -68,9 +68,18 @@ enough to the source geometry to be worth looking at.
 # Implementation
 
 The viewer is written in ES modules against Three.js [@threejs], with no
-bundler, no framework, and no runtime dependency beyond Three.js itself. Meshes
-are streamed with progress reporting and cancellation, and stored in the Cache
-Storage API so a mesh is downloaded at most once per browser.
+bundler, no framework, and no runtime dependency beyond Three.js itself. It is
+structured as a core library exposed through a web experience, in an MVC-style
+split: `core/` holds the model — scenes, cameras, clipping, camera sync, the
+layer and anatomy loading state machines and the view state — and never
+touches the DOM, taking its renderer and controls through injected adapters
+and reporting every transition through an event emitter; `viewer.js` is the
+view and controller that turns DOM input into calls on that core and renders
+its events, and one small adapter module is the only place a WebGL renderer is
+constructed. The core is importable on its own (`package.json` exposes it as
+the package entry, with a headless adapter set for use outside a browser).
+Meshes are streamed with progress reporting and cancellation, and stored in
+the Cache Storage API so a mesh is downloaded at most once per browser.
 
 The assets it serves are produced by a documented pipeline
 (`tools/optimize/`): binary STL is converted to glTF, welded into an indexed
@@ -125,8 +134,15 @@ orientation and not for cross-species morphometric comparison.
 
 # Quality control
 
-The data layer, the caching layer and the geometry code underlying the reported
-error figures are covered by 61 unit tests on the Node test runner; 18
+The data layer, the caching layer, the geometry code underlying the reported
+error figures and the core library itself are covered by 417 unit tests on
+the Node test runner. The core runs headless under a stub renderer with the
+real Three.js orbit controls, so pane construction, clipping and cap geometry,
+camera synchronisation, the loading state machines and every view transition
+are exercised without a browser; the geometry-loading path is driven with
+synthetic STL and uncompressed glTF meshes there, while the shipped
+Draco-compressed assets are decoded only by the browser suite. A static scan
+asserts that no core module references a DOM, timer or network global. 18
 Playwright tests drive the real application in a real browser, asserting that
 WebGL initialises, that a toggled layer reaches the GPU, that the cache is
 populated, and that the controls behave. Continuous integration runs both, and

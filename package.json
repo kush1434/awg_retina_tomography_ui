@@ -12,6 +12,24 @@
   "engines": {
     "node": ">=20"
   },
+  "exports": {
+    ".": "./core/index.js",
+    "./core/*": "./core/*.js",
+    "./headless": "./core/adapters-headless.js",
+    "./data-loader": "./data-loader.js",
+    "./asset-loader": "./asset-loader.js"
+  },
+  "files": [
+    "core",
+    "data-loader.js",
+    "asset-loader.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "peerDependencies": {
+    "three": "^0.169.0"
+  },
   "scripts": {
     "test": "node --test test/*.test.js test/core/*.test.js",
     "test:watch": "node --test --watch test/*.test.js test/core/*.test.js",

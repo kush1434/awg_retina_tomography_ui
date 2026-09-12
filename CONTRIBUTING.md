@@ -21,14 +21,17 @@ If something in the documentation is wrong or unclear, that is a bug too.
 3. Run the tests:
 
    ```bash
-   npm test                   # unit tests (Node >= 20, no dependencies)
-   npm install && npx playwright install chromium
+   npm ci                     # three is a devDependency for the headless core tests
+   npm test                   # unit tests; Node >= 20 (globs are expanded by the
+                              # shell; on Windows use Node 22)
+   npx playwright install chromium
    npm run test:e2e           # browser tests
    ```
 
 4. Add tests for anything you fixed or added. The data, caching and geometry
-   layers are unit-tested in `test/`; behaviour that only shows up in a browser
-   belongs in `test/e2e/`.
+   layers are unit-tested in `test/`, the DOM-free `core/` library in
+   `test/core/`; behaviour that only shows up in a browser belongs in
+   `test/e2e/`.
 5. Open a pull request describing what changed and why.
 
 CI runs both suites plus an asset decode on every pull request.
