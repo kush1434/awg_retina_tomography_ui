@@ -58,7 +58,7 @@ python3 -m http.server 8000
 | File              | Responsibility                                             |
 |-------------------|------------------------------------------------------------|
 | `index.html`      | Markup, theming, Three.js import map.                       |
-| `core/`           | The DOM-free library: scenes, cameras, clipping, sync, layer & anatomy loading, view state — events out, adapters in. Entry `core/index.js`. |
+| `core/`           | The DOM-free library: scenes, cameras, clipping, sync, layer & anatomy loading, view state — events out, adapters in. Entry `core/index.js`; see [Using the core in your own page](#using-the-core-in-your-own-page). |
 | `app/browser-adapters.js` | The one browser-only seam: WebGL renderer, OrbitControls on the canvas, resize observation. |
 | `app/ui/`         | The view: `chrome.js` (toasts, confirm, HUD, study menu, status-bar mirrors of the view events), `layer-panel.js` and `anatomy-panel.js` (the two rails — DOM in, `wb.*` calls out, events rendered back). |
 | `viewer.js`       | The controller entry: builds the workbench with the browser adapters, reads the URL, wires the top-level controls and runs the frame loop. |
@@ -108,6 +108,145 @@ See [`tools/optimize/`](tools/optimize) for the pipeline.
 
 ---
 
+## Using the core in your own page
+
+`core/` is the viewer without the viewer: scenes, cameras, clipping, camera
+sync and the layer / anatomy loading state machines, with no DOM anywhere in
+its module graph. It takes its renderer and controls through injected
+**adapters**, its bytes through an injected **io**, and reports every
+transition through an **event emitter** — so the same library drives the page
+in this repo, a page of your own, or a Node process with no browser at all.
+
+### Getting it
+
+It is not on npm. Install it from git, or copy `core/`,
+`app/browser-adapters.js` and `asset-loader.js` into your own project and
+import them by relative path:
+
+```bash
+npm install github:GoJian/awg_retina_tomography_ui three   # three is a peer dependency (^0.169.0)
+```
+
+| Import | What you get |
+|---|---|
+| `awg-retina-tomography-ui` | the core barrel — `createWorkbench`, `createPane`, the clipping / framing / materials helpers ([`core/index.js`](core/index.js)) |
+| `awg-retina-tomography-ui/browser` | `browserAdapters(el)` and `mountPane(pane, el)` — the WebGL / OrbitControls / ResizeObserver half |
+| `awg-retina-tomography-ui/headless` | `headlessAdapters()` — a stub renderer plus the real OrbitControls, for Node |
+| `awg-retina-tomography-ui/asset-loader` | `fetchBuffer` / `isCached` — streaming downloads with progress, cancellation and Cache Storage |
+| `awg-retina-tomography-ui/data-loader` | the CSV manifest parser, if you want this repo's dataset format too |
+
+### A minimal page
+
+The core imports `three` and `three/addons/` by bare specifier, so a page with
+no build step needs the same import map `index.html` carries (a bundler
+resolves both from `node_modules` instead):
+
+```html
+<script type="importmap">
+{ "imports": {
+    "three": "https://esm.sh/three@0.169.0",
+    "three/addons/": "https://esm.sh/three@0.169.0/examples/jsm/",
+    "awg/": "./node_modules/awg-retina-tomography-ui/"
+} }
+</script>
+<div id="left"></div><div id="right"></div>
+
+<script type="module">
+import { createWorkbench } from 'awg/core/index.js';
+import { browserAdapters, mountPane } from 'awg/app/browser-adapters.js';
+import { fetchBuffer, isCached } from 'awg/asset-loader.js';
+
+const left = document.getElementById('left'), right = document.getElementById('right');
+const wb = createWorkbench({
+  adapters: { glb: browserAdapters(left), stl: browserAdapters(right) },
+  io: { fetchBuffer, isCached },
+  anatomyUrl: '/models/eye-anatomy.glb',   // the registry URLs are relative to THIS repo's page
+});
+mountPane(wb.panes.glb, left);
+mountPane(wb.panes.stl, right);
+requestAnimationFrame(function frame(now) { wb.tick(now); requestAnimationFrame(frame); });
+
+wb.on('layer:state', ({ id, state }) => console.log(id, state));   // render the events you care about
+
+wb.anatomy.load();                                   // reference eye → left pane
+wb.layers.setSamples(samples);                       // your meshes → right pane (shape below)
+wb.layers.load(wb.layers.findStructure('s1__retina'));
+</script>
+```
+
+`createWorkbench` takes `{ adapters, io, loaders, parsers, modelId, anatomyUrl,
+startTime }`. `adapters` is required — one `{ createRenderer, createControls }`
+pair for both panes or `{ glb, stl }` for one each — and is the only place a
+WebGL context is made. `io` is any `{ fetchBuffer(url, { signal, onProgress }),
+isCached(url) }`; `loaders` / `parsers` let you swap in your own Three loaders
+(a self-hosted Draco decoder, say). Nothing is loaded until you ask.
+
+### The records `layers` takes
+
+`wb.layers.setSamples(...)` wants the data-loader's own records. They are plain
+objects, so you can build them yourself — one sample per subject, one structure
+per downloadable mesh:
+
+```js
+const samples = [{
+  id: 's1',                            // unique; the `sampleId` in every event
+  label: 'Sample 1',
+  offset: { x: 0, y: 0, z: 0 },        // position in the shared workspace, as a fraction of its size
+  opacity: 1,                          // whole-sample opacity multiplier
+  structures: [{
+    id: 's1__retina',                  // unique; the `id` in every layer:* event
+    sampleId: 's1',
+    label: 'Retina',
+    path: '/meshes/retina.glb',        // what io.fetchBuffer is called with
+    kind: 'gltf',                      // 'gltf' → glTF/GLB, anything else → binary STL
+    color: 0xd9634c,
+    opacity: 1,
+    bytes: null,                       // size when known; over 400 MB `layers.isHeavy()` is true
+  }],
+}];
+```
+
+`color` and `opacity` are written back by `setColor` / `setOpacity`, and
+`offset` by the offset setters — the records are the live state, not a copy.
+
+### The events
+
+`wb.on(name, fn)` returns an unsubscribe; `wb.once` and `wb.off` are there too.
+The core never touches a widget — this table is the whole interface out:
+
+| Event | Payload |
+|---|---|
+| `rendermode` | `{ mode: 'surface' \| 'wireframe' \| 'slices' }` |
+| `clip` | frozen `{ x: { on, pos }, y, z, flip, showPlanes }` |
+| `layout` | `{ layout: 'split' \| 'overlay' }` |
+| `sync` `autorotate` `grid` `linkoffsets` `solidfill` | `{ on }` |
+| `opacity` | `{ global }` |
+| `sample:offset` | `{ sampleId, axis, value }` |
+| `layer:state` | `{ id, state: 'idle' \| 'loading' \| 'loaded' \| 'error', phase?: 'start' \| 'cache' \| 'build', cached? }` |
+| `layer:progress` | `{ id, loaded, total, pct }` (`pct` is 0 when the response has no `Content-Length`) |
+| `layer:error` | `{ id, label, error }` |
+| `layers:visible` | `{ anyVisible, visibleIds }` |
+| `anatomy:model` | `{ id, model, isDefault, preset }` |
+| `anatomy:status` | `{ state: 'idle' \| 'loading' \| 'loaded' \| 'error', phase?: 'start' \| 'download' \| 'build', pct?, loaded?, total?, fromCache?, message? }` |
+| `anatomy:parts` | `{ modelId, keys, unmatched, preset }` |
+| `anatomy:preset` | `{ name, preset }` |
+| `anatomy:style` | `{ key, state: { visible, color, opacity } }` |
+| `anatomy:opacity` `anatomy:visible` `anatomy:offset` | `{ value }` / `{ on }` / `{ axis, value, offset }` |
+| `stats` | `{ az, el, triangles, fps }` — emitted from `tick(now)`, at most every 250 ms |
+
+Neither controller ever rejects: a failed download arrives as `layer:state
+error` + `layer:error` (or `anatomy:status error`), and a cancelled one as a
+single `idle`.
+
+### Without a browser
+
+`headlessAdapters()` swaps the WebGL renderer for a stub and keeps the real
+OrbitControls, so the whole library — loading, styling, clipping, framing,
+camera sync — runs under Node. That is how `npm test` exercises it; see
+[`test/core/`](test/core) for worked examples.
+
+---
+
 ## Tests
 
 ```bash
@@ -125,7 +264,7 @@ clipping planes and caps, camera sync, STL/glTF parsing of synthetic meshes,
 the layer and anatomy loading state machines, and every workbench transition —
 plus a static scan proving no core module reaches for a browser global, and
 the `app/ui/` view modules rendered into a small fake DOM over a headless
-workbench (477 tests, Node's built-in runner; `three` is the only devDependency
+workbench (507 tests, Node's built-in runner; `three` is the only devDependency
 the unit tests need — `@playwright/test` serves the browser suite alone).
 `npm run test:e2e` drives the actual application in Chromium and checks that
 WebGL starts, that a toggled layer reaches the GPU, that the asset cache fills,

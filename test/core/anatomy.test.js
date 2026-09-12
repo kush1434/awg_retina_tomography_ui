@@ -83,6 +83,18 @@ const meshes = (obj) => { const out = []; obj.traverse((c) => { if (c.isMesh && 
 const quiet = (t) => { t.mock.method(console, 'warn', () => {}); t.mock.method(console, 'error', () => {}); };
 
 // ---------------------------------------------------------------------------
+//  The opening view direction
+// ---------------------------------------------------------------------------
+describe('ANATOMY_VIEW_DIR', () => {
+  test('looks in from -X, a little above and to the front', () => {
+    // Asserted as a literal on purpose: every other check compares the camera
+    // to this constant, so flipping it would otherwise agree with itself and
+    // open the eye on its featureless lateral side.
+    assert.deepEqual(ANATOMY_VIEW_DIR.toArray(), [-0.72, 0.26, 0.64]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 //  Construction, model resolution and URL
 // ---------------------------------------------------------------------------
 describe('construction', () => {
@@ -191,6 +203,7 @@ describe('load()', () => {
     const dir = glb.camera.position.clone().sub(glb.controls.target).normalize();
     const want = ANATOMY_VIEW_DIR.clone().normalize();
     near(dir.x, want.x); near(dir.y, want.y); near(dir.z, want.z);
+    assert.ok(dir.x < 0 && dir.y > 0 && dir.z > 0, 'the cornea side, not the lateral one');
     assert.ok(glb.defaultDist > 0);
     assert.equal(glb.bounds.isEmpty(), false);
     assert.equal(anatomy.loading, false);
@@ -224,6 +237,31 @@ describe('load()', () => {
     assert.equal(ctx.anatomy.object, null);
     assert.equal(ctx.anatomy.loading, false);
     assert.equal(ctx.of('anatomy:parts').length, 0);
+  });
+
+  test('a repeated load() replaces the model rather than stacking a second one', async () => {
+    const ctx = makeCtx();
+    const { anatomy, glb } = ctx;
+    await anatomy.load();
+    const first = anatomy.object;
+    await anatomy.load();                    // #overlay-load / #overlay-retry both land here
+    assert.notEqual(anatomy.object, first);
+    assert.equal(glb.root.children.length, 1);
+    assert.equal(glb.root.children[0], anatomy.object);
+    assert.equal(first.parent, null, 'the previous model left the pane');
+    assert.equal(anatomy.parts.size, 5);
+  });
+
+  test('a download with no Content-Length reports pct 0, never NaN', async () => {
+    const ctx = makeCtx({ routes: { [MESHEYE_URL]: glbWithNodes(MESHEYE_KEYS), hideTotal: true } });
+    await ctx.anatomy.load();
+    const ticks = ctx.of('anatomy:status').filter((e) => e.phase === 'download');
+    assert.equal(ticks.length, 2);
+    for (const t of ticks) {
+      assert.equal(t.total, 0);
+      assert.equal(t.pct, 0, 'the overlay card renders this percentage');
+      assert.equal(t.fromCache, false);
+    }
   });
 
   test('loading flips true while the download is in flight and false afterwards', async () => {
@@ -315,6 +353,21 @@ describe('setModel()', () => {
     assert.equal(anatomy.stateFor('pupil').color, 0x2b2f36);
   });
 
+  test('in overlay the old model leaves the workspace group, not just the glb pane', async () => {
+    const ctx = makeCtx({ view: { layout: 'overlay' } });
+    const { anatomy, stl } = ctx;
+    await anatomy.load();
+    const old = anatomy.object;
+    assert.equal(old.parent, anatomy.group, 'overlay: the model lives under the wrapper, not glb.root');
+
+    await anatomy.setModel('upat');
+    assert.notEqual(anatomy.object, old);
+    assert.equal(old.parent, null, 'the disposed model is out of the scene graph');
+    assert.equal(anatomy.group.children.length, 1);
+    assert.equal(stl.root.children.filter((c) => c === anatomy.group).length, 1);
+    assert.deepEqual([...anatomy.parts.keys()], UPAT_KEYS);
+  });
+
   test('switching back to the default reports isDefault true', async () => {
     const ctx = makeCtx({ options: { modelId: 'upat' } });
     await ctx.anatomy.setModel('mesheye');
@@ -379,6 +432,12 @@ describe('registerParts()', () => {
     const again = anatomy.registerParts(scene);
     assert.deepEqual(again.keys, ['sclera', 'retina']);
     assert.deepEqual(again.unmatched, ['Stray', '(unnamed)']);
+    // The keys are the same either way — what must not change is the mesh each
+    // one points at: a back face would answer to its parent's name too.
+    assert.equal(anatomy.parts.get('sclera'), direct);
+    assert.equal(anatomy.parts.get('retina'), viaAncestor);
+    assert.equal(anatomy.parts.get('sclera').userData.anatomyBackOf, undefined);
+    assert.equal(anatomy.parts.get('retina').userData.anatomyBackOf, undefined);
   });
 });
 
@@ -522,6 +581,13 @@ describe('setPreset()', () => {
     assert.equal(anatomy.parts.get('cornea').visible, true);
     near(anatomy.stateFor('sclera').opacity, 1);
     assert.equal(anatomy.parts.get('sclera').material.transparent, false);
+    // 'whole' carries no opacity entries at all, so every structure falls back
+    // to its own registry default — not to opaque.
+    near(anatomy.stateFor('cornea').opacity, 0.15);
+    near(anatomy.parts.get('cornea').material.opacity, 0.15);
+    assert.equal(anatomy.parts.get('cornea').material.transparent, true);
+    near(anatomy.stateFor('lens').opacity, 0.82);
+    near(anatomy.parts.get('lens').material.opacity, 0.82);
   });
 
   test("an unknown preset is a no-op: state, preset name and events untouched", async () => {
@@ -628,6 +694,23 @@ describe('place()', () => {
     assert.equal(anatomy.group.children.length, 1);
   });
 
+  test('refreshes the workspace bounds before the refit, not after it', async () => {
+    const ctx = makeCtx();
+    const { anatomy, stl, view, layers } = ctx;
+    await anatomy.load();
+    assert.equal(stl.bounds.isEmpty(), true, 'split: the workspace has no extent yet');
+
+    let boundsAtFit = null;
+    const orig = layers.fitStl.bind(layers);
+    layers.fitStl = (o) => { boundsAtFit = stl.bounds.clone(); return orig(o); };
+
+    view.layout = 'overlay';
+    anatomy.place();
+    assert.equal(boundsAtFit.isEmpty(), false, 'the refit must see the workspace it is framing');
+    const fresh = new THREE.Box3().setFromObject(stl.root);
+    near(boundsAtFit.min.x, fresh.min.x); near(boundsAtFit.max.z, fresh.max.z);
+  });
+
   test('back to split: the group leaves stl.root and the object returns to glb.root, reframed', async () => {
     const ctx = makeCtx();
     const { anatomy, glb, stl, view } = ctx;
@@ -652,6 +735,7 @@ describe('place()', () => {
     const dir = glb.camera.position.clone().sub(glb.controls.target).normalize();
     const want = ANATOMY_VIEW_DIR.clone().normalize();
     near(dir.x, want.x); near(dir.y, want.y); near(dir.z, want.z);
+    assert.ok(dir.x < 0, 'back on the cornea side');
     // Once world matrices refresh (the next frame) the object is back at its original extent —
     // the overlay group's scale lived on the group, never on the object.
     glb.scene.updateMatrixWorld(true);

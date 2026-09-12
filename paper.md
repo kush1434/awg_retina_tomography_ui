@@ -78,7 +78,9 @@ view — the two side panels and the surrounding chrome, which turn DOM input
 into calls on that core and render its events — `viewer.js` the controller
 entry that assembles them, and one small adapter module is the only place a
 WebGL renderer is constructed. The core is importable on its own (`package.json` exposes it as
-the package entry, with a headless adapter set for use outside a browser).
+the package entry, with a headless adapter set for use outside a browser);
+`README.md` documents the entry points, the record and event contracts and a
+worked minimal page.
 Meshes are streamed with progress reporting and cancellation, and stored in
 the Cache Storage API so a mesh is downloaded at most once per browser.
 

@@ -332,7 +332,11 @@ export class AnatomyController {
   }
 
   // Per-structure row controls. Visibility and colour rebuild the caps;
-  // opacity only restyles.
+  // opacity only restyles. The cap rebuilds here (and in setPreset) are
+  // inherited from the original and are no-ops today: only the stl workspace
+  // is built with `capsEnabled`, so buildCaps returns at its first line for
+  // the glb pane. They are kept so the call sites stay where the original had
+  // them, should the anatomy pane ever gain caps.
   setVisible(key, on) {
     this.stateFor(key).visible = on;
     this.applyStyle(key);

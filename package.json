@@ -16,11 +16,13 @@
     ".": "./core/index.js",
     "./core/*": "./core/*.js",
     "./headless": "./core/adapters-headless.js",
+    "./browser": "./app/browser-adapters.js",
     "./data-loader": "./data-loader.js",
     "./asset-loader": "./asset-loader.js"
   },
   "files": [
     "core",
+    "app/browser-adapters.js",
     "data-loader.js",
     "asset-loader.js",
     "README.md",

@@ -50,6 +50,17 @@ describe('glbWithNodes', () => {
     assert.deepEqual(Array.from(mesh.geometry.attributes.normal.array.slice(0, 3)), [0, 0, 1]);
   });
 
+  test('assetVersion 1.0 is structurally valid but reported through onError, not thrown', async () => {
+    const buf = glbWithNodes(['a'], { assetVersion: '1.0' });
+    assert.equal(new DataView(buf).getUint32(0, true), 0x46546C67, 'still a GLB');
+    let threw = null, reported = null;
+    try {
+      new GLTFLoader().parse(buf, '', () => {}, (e) => { reported = e; });
+    } catch (e) { threw = e; }
+    assert.equal(threw, null, 'the loader returns rather than throwing');
+    assert.match(reported.message, /versions >=2\.0/);
+  });
+
   test('chunks are 4-byte aligned and the header length matches', () => {
     const buf = glbWithNodes(['x', 'yy']);
     const dv = new DataView(buf);
@@ -98,6 +109,14 @@ describe('stubIo', () => {
     assert.deepEqual(Array.from(new Uint8Array(buf)), [1, 2, 3]);
     assert.equal(await io.isCached('c.glb'), true);
     assert.equal(await io.isCached('other'), false);
+  });
+
+  test('hideTotal reports every tick with total 0 (a response with no Content-Length)', async () => {
+    const io = stubIo({ 'a.stl': binarySTL(1), progressTicks: 2, hideTotal: true });
+    const ticks = [];
+    await io.fetchBuffer('a.stl', { onProgress: (p) => ticks.push(p) });
+    assert.deepEqual(ticks.map((t) => t.total), [0, 0]);
+    assert.ok(ticks.every((t) => t.loaded > 0), 'the byte counter still runs');
   });
 
   test('an already-aborted signal rejects with AbortError before any tick', async () => {

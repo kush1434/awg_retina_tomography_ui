@@ -139,6 +139,7 @@ describe('package.json packaging', () => {
   test('exports map points "." at the barrel and "./headless" at the adapters', () => {
     assert.equal(pkg.exports['.'], './core/index.js');
     assert.equal(pkg.exports['./headless'], './core/adapters-headless.js');
+    assert.equal(pkg.exports['./browser'], './app/browser-adapters.js');
     assert.equal(pkg.exports['./core/*'], './core/*.js');
     assert.equal(pkg.exports['./data-loader'], './data-loader.js');
     assert.equal(pkg.exports['./asset-loader'], './asset-loader.js');
@@ -148,8 +149,12 @@ describe('package.json packaging', () => {
     }
   });
 
-  test('files whitelist ships the library and its two I/O helpers only', () => {
-    assert.deepEqual(pkg.files, ['core', 'data-loader.js', 'asset-loader.js', 'README.md', 'LICENSE']);
+  test('files whitelist ships the library, its two I/O helpers and the browser seam only', () => {
+    // The browser adapters are documented as `<name>/browser` (README: "Using
+    // the core in your own page"), so they ship; the app/ui view modules and
+    // viewer.js do not — a consumer brings its own.
+    assert.deepEqual(pkg.files, ['core', 'app/browser-adapters.js', 'data-loader.js', 'asset-loader.js', 'README.md', 'LICENSE']);
+    assert.ok(!pkg.files.includes('app'), 'app/ui is not part of the package');
     assert.ok(existsSync(join(ROOT, 'LICENSE')));
     assert.equal(pkg.sideEffects, false);
     assert.equal(pkg.type, 'module');
@@ -173,6 +178,11 @@ describe('package.json packaging', () => {
 
     const paneSub = await import(`${pkg.name}/core/pane`);
     assert.equal(paneSub.createPane, core.createPane);
+
+    const browser = await import(`${pkg.name}/browser`);
+    assert.equal(typeof browser.browserAdapters, 'function');
+    assert.equal(typeof browser.mountPane, 'function');
+    assert.ok(!('createWorkbench' in browser));
 
     const dl = await import(`${pkg.name}/data-loader`);
     assert.equal(typeof dl.loadCSVData, 'function');

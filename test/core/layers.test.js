@@ -3,7 +3,8 @@
 //  sequence and scene-graph result, abort / failure paths (one idle, never
 //  two), visibility syncing with and without an object, the sample offset /
 //  opacity rules and their sample:offset events, the empty-samples default,
-//  the solid-fill reload cycle, framing, and the pure solidVariant /
+//  the clip bounds every move re-derives, the solid-fill reload cycle,
+//  framing, and the pure solidVariant /
 //  effectivePath / isHeavy rules. Meshes come from the in-memory fixtures and
 //  bytes from stubIo; nothing here touches a DOM.
 // ============================================================================
@@ -15,7 +16,7 @@ import { LayerController, HEAVY_BYTES, solidVariant, effectivePath } from '../..
 import { createPane } from '../../core/pane.js';
 import { headlessAdapters } from '../../core/adapters-headless.js';
 import { createEmitter } from '../../core/emitter.js';
-import { createClipState } from '../../core/clipping.js';
+import { createClipState, clipPlaneFor } from '../../core/clipping.js';
 import { createLoaders, createMeshParsers } from '../../core/mesh-parsers.js';
 import { fitDistance, OVERLAY_TARGET } from '../../core/framing.js';
 import { binarySTL, glbWithNodes, stubIo } from '../helpers/fixtures.js';
@@ -82,6 +83,26 @@ const firstMesh = (obj) => { let m = null; obj.traverse((c) => { if (!m && c.isM
 const groupOf = (layers, sampleId) => layers.sampleGroups.get(sampleId);
 // World-space centre of a group: a normalised group sits at offset × OVERLAY_TARGET.
 const centerOf = (g) => new THREE.Box3().setFromObject(g).getCenter(new THREE.Vector3());
+
+// Everything updateBounds re-derives once the workspace moves: the recorded
+// bounds, the bounding cube, the grid floor and the clip planes that sit in
+// them. Asserting the consequence pins the call without spying on it — a
+// stale extent leaves the slice planes cutting the previous subject.
+function assertBoundsFresh(pane, view, where = '') {
+  const fresh = new THREE.Box3().setFromObject(pane.root);
+  const size = fresh.getSize(new THREE.Vector3());
+  const center = fresh.getCenter(new THREE.Vector3());
+  for (const ax of ['x', 'y', 'z']) {
+    near(pane.bounds.min[ax], fresh.min[ax], `${where}: bounds.min.${ax}`);
+    near(pane.bounds.max[ax], fresh.max[ax], `${where}: bounds.max.${ax}`);
+    near(pane.boxHelper.scale[ax], size[ax], `${where}: boxHelper.scale.${ax}`);
+    const want = clipPlaneFor(ax, fresh, view.clipState[ax].pos, view.clipState.flip);
+    near(pane.clipPlanes[ax].constant, want.constant, `${where}: clipPlanes.${ax}.constant`);
+  }
+  near(pane.grid.position.x, center.x, `${where}: grid.x`);
+  near(pane.grid.position.y, fresh.min.y, `${where}: grid.y`);
+  near(pane.grid.position.z, center.z, `${where}: grid.z`);
+}
 
 // Resolves once the controller has emitted `n` layer:progress events.
 function afterProgress(ctx, n = 1) {
@@ -312,11 +333,58 @@ describe('load()', () => {
     const expected = fitDistance(pane.camera, OVERLAY_TARGET, 1.45);
     near(pane.defaultDist, expected);
     near(pane.controls.getDistance(), expected);
+    // The refit also re-derives the clip bounds: move the group and refit.
+    groupOf(layers, 's1').position.x += 40;
+    layers.fitStl(1.45);
+    assertBoundsFresh(pane, ctx.view, 'after fitStl');
+
     // an empty workspace is a no-op
     const empty = makeCtx();
     const before = empty.pane.camera.position.clone();
     empty.layers.fitStl();
     assert.deepEqual(empty.pane.camera.position.toArray(), before.toArray());
+  });
+
+  test('a second layer in an existing group refreshes the clip bounds, though no refit runs', async () => {
+    const { a, b, samples } = twoSamples();
+    const ctx = makeCtx({ samples });
+    await ctx.layers.load(a);
+    await ctx.layers.load(b);
+    // Same sample group, so fitStl is skipped: load()'s own updateBounds is the
+    // only thing keeping the slice planes on the grown workspace.
+    assert.equal(ctx.layers.groupCount(), 1);
+    assertBoundsFresh(ctx.pane, ctx.view, 'after a second layer');
+  });
+
+  test('a download with no Content-Length reports pct 0, never NaN', async () => {
+    const { a, samples } = twoSamples();
+    const ctx = makeCtx({ samples, routes: { 'a.stl': binarySTL(2), hideTotal: true } });
+    await ctx.layers.load(a);
+    const progress = ctx.of('layer:progress');
+    assert.equal(progress.length, 2);
+    for (const p of progress) {
+      assert.equal(p.total, 0);
+      assert.equal(p.pct, 0, 'the app writes this into the row status and the bar width');
+      assert.ok(p.loaded > 0, 'the byte counter still runs');
+    }
+  });
+
+  test('abort(id) cancels that download only — the others keep running', async () => {
+    const { a, c, samples } = twoSamples();
+    const ctx = makeCtx({ samples, progressTicks: 4 });
+    const { layers } = ctx;
+    const pa = layers.load(a), pc = layers.load(c);
+    await afterProgress(ctx, 2);
+
+    layers.abort('a');
+    assert.equal(layers.inFlight.has('c'), true, 'the per-row cancel is selective');
+    await Promise.all([pa, pc]);
+
+    assert.deepEqual(ctx.of('layer:state').filter((e) => e.state === 'idle').map((e) => e.id), ['a']);
+    assert.deepEqual(ctx.of('layer:state').filter((e) => e.state === 'loaded').map((e) => e.id), ['c']);
+    assert.equal(layers.has('a'), false);
+    assert.equal(layers.has('c'), true);
+    assert.equal(ctx.of('layer:error').length, 0);
   });
 
   test('abort(id) mid-download → exactly one layer:state idle, no error, inFlight cleared, promise resolves', async () => {
@@ -480,6 +548,21 @@ describe('colour / opacity', () => {
     assert.equal(ctx.events.filter((e) => e.evt !== 'layer:state' && e.evt !== 'layer:progress').length, 1, 'only the load reported visibility');
   });
 
+  test('setColor rebuilds the cross-section caps, so a recoloured coat cuts in its new colour', async () => {
+    const { f10, samples } = twoSamples();
+    const ctx = makeCtx({ samples, view: { solidFill: true, renderMode: 'slices' } });
+    ctx.view.clipState.x.on = true;                  // caps exist for the single-plane case only
+    await ctx.layers.load(f10);
+    // The cap quad is the stencil-tested one; the two masking meshes write no colour.
+    const capColors = () => ctx.pane.capGroup.children
+      .filter((c) => c.material.stencilFunc === THREE.NotEqualStencilFunc)
+      .map((c) => c.material.color.getHex());
+    assert.deepEqual(capColors(), [0x00ff00], 'one cap per showing coat, in the coat colour');
+
+    ctx.layers.setColor(f10, 0x123456);
+    assert.deepEqual(capColors(), [0x123456]);
+  });
+
   test('setOpacity / setSampleOpacity / reapplyAllOpacity multiply through to the materials', async () => {
     const { a, b, samples } = twoSamples();
     const ctx = makeCtx({ samples });
@@ -557,6 +640,7 @@ describe('offsets', () => {
     assert.deepEqual(ctx.of('sample:offset').map((e) => [e.sampleId, e.axis, e.value]), [['s1', 'y', -0.2], ['s2', 'y', -0.2]]);
     near(centerOf(groupOf(ctx.layers, 's1')).y, -0.2 * OVERLAY_TARGET);
     near(centerOf(groupOf(ctx.layers, 's2')).y, -0.2 * OVERLAY_TARGET);
+    assertBoundsFresh(ctx.pane, ctx.view, 'after offsetChanged');
   });
 
   test('resetOffsets zeroes the edited sample, or every sample when linked', async () => {
@@ -578,6 +662,7 @@ describe('offsets', () => {
     assert.equal(ctx.of('sample:offset').length, 6);
     near(centerOf(groupOf(ctx.layers, 's2')).x, 0);
     near(centerOf(groupOf(ctx.layers, 's1')).x, 0);
+    assertBoundsFresh(ctx.pane, ctx.view, 'after resetOffsets');
   });
 
   test('snapOffsetsToFirst snaps every sample to samples[0].offset, one event per sample per axis', async () => {
@@ -598,6 +683,7 @@ describe('offsets', () => {
       const c = centerOf(g);
       near(c.x, 0.1 * OVERLAY_TARGET); near(c.y, -0.1 * OVERLAY_TARGET); near(c.z, 0.5 * OVERLAY_TARGET);
     }
+    assertBoundsFresh(ctx.pane, ctx.view, 'after snapOffsetsToFirst');
   });
 });
 

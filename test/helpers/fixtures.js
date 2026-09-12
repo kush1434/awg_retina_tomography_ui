@@ -38,11 +38,17 @@ export function binarySTL(n = 1) {
  * each carrying a single-triangle mesh (with a normal attribute when
  * `normals` is set) and its own material. Written as JSON + BIN chunks per
  * the glTF 2.0 spec.
+ *
+ * `assetVersion` writes a different `asset.version`: a structurally valid GLB
+ * declaring '1.0' is the one failure GLTFLoader reports through its onError
+ * callback instead of throwing, which is how the shipped Draco files fail too.
+ * A parser that dropped its `reject` would hang on it rather than reject.
+ *
  * @param {string[]} names
- * @param {{ normals?: boolean }} [opts]
+ * @param {{ normals?: boolean, assetVersion?: string }} [opts]
  * @returns {ArrayBuffer}
  */
-export function glbWithNodes(names, { normals = false } = {}) {
+export function glbWithNodes(names, { normals = false, assetVersion = '2.0' } = {}) {
   const POS = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
   const NRM = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]);
   const stride = POS.byteLength + (normals ? NRM.byteLength : 0);
@@ -78,7 +84,7 @@ export function glbWithNodes(names, { normals = false } = {}) {
   });
 
   const json = {
-    asset: { version: '2.0', generator: 'fixtures.js' },
+    asset: { version: assetVersion, generator: 'fixtures.js' },
     scene: 0,
     scenes: [{ nodes: names.map((_, i) => i) }],
     nodes, meshes, materials, accessors, bufferViews,
@@ -150,11 +156,15 @@ function toArrayBuffer(data) {
  * the bytes. An unknown URL rejects like a 404; an aborted signal rejects
  * with an AbortError, before the first tick or between ticks.
  *
- * @param {Record<string, ArrayBuffer|ArrayBufferView> & { cached?: Set<string>|string[], progressTicks?: number }} [routes]
+ * `hideTotal` reports every tick with `total: 0`, the way asset-loader.js does
+ * for a chunked response that carries no Content-Length (:44) — the case a
+ * progress percentage must not turn into NaN over.
+ *
+ * @param {Record<string, ArrayBuffer|ArrayBufferView> & { cached?: Set<string>|string[], progressTicks?: number, hideTotal?: boolean }} [routes]
  * @returns {{ fetchBuffer: Function, isCached: Function, calls: Array<{url: string, fromCache: boolean}> }}
  */
 export function stubIo(routes = {}) {
-  const { cached = new Set(), progressTicks = 2, ...table } = routes;
+  const { cached = new Set(), progressTicks = 2, hideTotal = false, ...table } = routes;
   const cachedSet = cached instanceof Set ? cached : new Set(cached);
   const calls = [];
 
@@ -182,7 +192,7 @@ export function stubIo(routes = {}) {
     for (let i = 1; i <= ticks; i++) {
       await yieldTick();
       if (signal?.aborted) throw abortError();
-      onProgress?.({ loaded: Math.round((total * i) / ticks), total });
+      onProgress?.({ loaded: Math.round((total * i) / ticks), total: hideTotal ? 0 : total });
     }
     return buf;
   }

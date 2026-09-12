@@ -17,6 +17,7 @@ import { headlessAdapters } from '../../core/adapters-headless.js';
 import { applyOrientation } from '../../core/orientation.js';
 import { fitDistance } from '../../core/framing.js';
 import { clipPlaneFor } from '../../core/clipping.js';
+import { createLoaders } from '../../core/mesh-parsers.js';
 import { ANATOMY_VIEW_DIR } from '../../core/anatomy.js';
 import { modelById } from '../../core/anatomy-models.js';
 import { binarySTL, glbWithNodes, stubIo } from '../helpers/fixtures.js';
@@ -134,6 +135,22 @@ describe('construction', () => {
     assert.equal(wb.anatomy.io, io);
     assert.equal(wb.layers.parsers, wb.anatomy.parsers);
     assert.equal(createWorkbench({ adapters: headlessAdapters() }).anatomy.modelId(), 'mesheye');
+  });
+
+  test('uses the loaders / parsers it is given rather than building its own', () => {
+    const parsers = { parseSTL() {}, parseGLTF() {}, parseAnatomyGLTF() {} };
+    const wb = createWorkbench({ adapters: headlessAdapters(), parsers });
+    assert.equal(wb.layers.parsers, parsers, 'an injected parser set is used as-is');
+    assert.equal(wb.anatomy.parsers, parsers);
+
+    // Both options are public API: a consumer self-hosting the Draco decoders
+    // passes its own loaders and must not silently get the gstatic defaults.
+    const loaders = createLoaders({ dracoDecoderPath: './vendor/draco/' });
+    const stlParse = mock.method(loaders.stlLoader, 'parse');
+    const wb2 = createWorkbench({ adapters: headlessAdapters(), loaders });
+    wb2.layers.parsers.parseSTL(binarySTL(1), { color: 0xffffff, opacity: 1 });
+    assert.equal(stlParse.mock.callCount(), 1);
+    assert.equal(wb2.layers.parsers, wb2.anatomy.parsers);
   });
 
   test('never reads globalThis.document while constructing', () => {
@@ -335,6 +352,15 @@ describe('setLayout / refitAfterReflow', () => {
     wb.refitAfterReflow('overlay');
     assert.notEqual(stl.defaultDist, 1);
     near(stl.defaultDist, fitDistance(stl.camera, maxDim(wb.layers.workspaceBox()), 1.7));
+
+    // It re-derives the clip bounds before it frames: move the workspace and
+    // the refit must see the new extent, not the pre-reflow one.
+    wb.anatomy.group.position.x += 250;
+    let boundsAtFit = null;
+    const orig = wb.layers.fitStl.bind(wb.layers);
+    wb.layers.fitStl = (o) => { boundsAtFit = stl.bounds.clone(); return orig(o); };
+    wb.refitAfterReflow('overlay');
+    near(boundsAtFit.max.x, new THREE.Box3().setFromObject(stl.root).max.x);
   });
 });
 
@@ -494,6 +520,7 @@ describe('resetPane / resetAll', () => {
     const dir = glb.camera.position.clone().sub(glb.controls.target).normalize();
     const want = ANATOMY_VIEW_DIR.clone().normalize();
     near(dir.x, want.x); near(dir.y, want.y); near(dir.z, want.z);
+    assert.ok(dir.x < 0 && dir.y > 0 && dir.z > 0, 'the cornea side, not the lateral one');
     const c = box.getCenter(new THREE.Vector3());
     near(glb.controls.target.x, c.x); near(glb.controls.target.y, c.y); near(glb.controls.target.z, c.z);
   });
@@ -505,9 +532,13 @@ describe('resetPane / resetAll', () => {
     assert.equal(wb.anatomy.parts.size, 0);
     assert.equal(glb.root.children.length, 1);
     glb.defaultDist = 1;
+    glb.root.children[0].position.x += 7;        // the recorded bounds are now stale
     wb.resetPane('glb');
     near(glb.defaultDist, fitDistance(glb.camera, maxDim(new THREE.Box3().setFromObject(glb.root)), 1.45));
     assert.equal(glb.bounds.isEmpty(), false);
+    const fresh = new THREE.Box3().setFromObject(glb.root);
+    near(glb.bounds.min.x, fresh.min.x, 'the fallback refreshes the clip bounds too');
+    near(glb.bounds.max.x, fresh.max.x);
   });
 
   test('resetPane on an empty pane changes nothing', () => {

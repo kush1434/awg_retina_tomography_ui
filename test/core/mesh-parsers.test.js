@@ -20,6 +20,16 @@ const DEFAULT_DRACO = 'https://www.gstatic.com/draco/versioned/decoders/1.5.7/';
 
 const meshesOf = (scene) => { const out = []; scene.traverse((c) => { if (c.isMesh) out.push(c); }); return out; };
 
+// A parser that dropped its `reject` callback never settles — the promise
+// would hang the caller (and this suite) forever rather than fail. Race the
+// parse against a timer so "never settled" reads as a test failure.
+function settles(promise, ms = 2000) {
+  return Promise.race([promise, new Promise((_, reject) => {
+    const t = setTimeout(() => reject(new Error('the parser never settled')), ms);
+    t.unref?.();
+  })]);
+}
+
 describe('createLoaders', () => {
   test('builds the STL / GLTF / DRACO trio with the GLTF loader wired to Draco', () => {
     const { dracoLoader, gltfLoader, stlLoader } = createLoaders();
@@ -125,6 +135,13 @@ describe('parseGLTF', () => {
   test('rejects on a buffer that is not a GLB', async () => {
     await assert.rejects(parseGLTF(new ArrayBuffer(16)));
   });
+
+  test('rejects — rather than hanging — when the loader reports the failure through onError', async () => {
+    // The synchronous throw above would reject with or without the `reject`
+    // callback; a valid GLB declaring glTF 1.0 is the asynchronous path, which
+    // is how every shipped (Draco) file fails.
+    await assert.rejects(settles(parseGLTF(glbWithNodes(['a'], { assetVersion: '1.0' }))), /versions >=2\.0/);
+  });
 });
 
 describe('parseAnatomyGLTF', () => {
@@ -150,6 +167,10 @@ describe('parseAnatomyGLTF', () => {
 
   test('rejects on a buffer that is not a GLB', async () => {
     await assert.rejects(parseAnatomyGLTF(new ArrayBuffer(16)));
+  });
+
+  test('rejects — rather than hanging — when the loader reports the failure through onError', async () => {
+    await assert.rejects(settles(parseAnatomyGLTF(glbWithNodes(['sclera'], { assetVersion: '1.0' }))), /versions >=2\.0/);
   });
 });
 
