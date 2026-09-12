@@ -123,7 +123,8 @@ headless — pane construction with a stub renderer and the real OrbitControls,
 clipping planes and caps, camera sync, STL/glTF parsing of synthetic meshes,
 the layer and anatomy loading state machines, and every workbench transition —
 plus a static scan proving no core module reaches for a browser global
-(417 tests, Node's built-in runner, `three` as the only devDependency).
+(417 tests, Node's built-in runner; `three` is the only devDependency the
+unit tests need — `@playwright/test` serves the browser suite alone).
 `npm run test:e2e` drives the actual application in Chromium and checks that
 WebGL starts, that a toggled layer reaches the GPU, that the asset cache fills,
 and that the controls behave (18 tests). Both run in CI on every push, along
