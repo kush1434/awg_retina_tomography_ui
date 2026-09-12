@@ -3,26 +3,17 @@
 //  Two linked Three.js scenes (eye-anatomy GLB | segmented layers) wrapped in a
 //  clinical instrument-panel UI: synced orbit, render modes (surface / wireframe
 //  / tri-planar slices via clipping planes), on-demand loading, caching & HUD.
+//  The scenes, the view state and every transition live in core/ (DOM-free);
+//  this file is the view + controller: it turns DOM input into calls on the
+//  workbench and renders the workbench's events back into the DOM.
 // ============================================================================
-
-import * as THREE from 'three';
 
 import { loadCSVData, probeSizes, resolveStructure, samplesData, formatBytes } from './data-loader.js';
 import { fetchBuffer, isCached, clearCache } from './asset-loader.js';
 import { browserAdapters, mountPane } from './app/browser-adapters.js';
-import { createPane } from './core/pane.js';
+import { createWorkbench } from './core/workbench.js';
 import { ANATOMY_MODELS } from './core/anatomy-models.js';
-import { fitBox, fitToObject } from './core/framing.js';
-import {
-  createClipState,
-  updateBounds as coreUpdateBounds, updateClips as coreUpdateClips,
-  applyRenderModeToPane as coreApplyRenderModeToPane, buildCaps as coreBuildCaps,
-} from './core/clipping.js';
-import { CameraSync } from './core/orientation.js';
-import { createLoaders, createMeshParsers } from './core/mesh-parsers.js';
-import { createEmitter } from './core/emitter.js';
-import { LayerController, HEAVY_BYTES } from './core/layers.js';
-import { AnatomyController, ANATOMY_VIEW_DIR } from './core/anatomy.js';
+import { HEAVY_BYTES } from './core/layers.js';
 
 // ---------------------------------------------------------------------------
 //  DOM
@@ -39,134 +30,78 @@ const toastHost = $('#toast-host');
 const btnSync = $('#btn-sync');
 
 // ---------------------------------------------------------------------------
-//  Global view state
+//  Workbench
 // ---------------------------------------------------------------------------
-const view = {
-  renderMode: 'surface',                            // surface | wireframe | slices
-  layout: 'split',                                  // split | overlay
-  globalOpacity: 1,
-  autoRotate: false,
-  linkOffsets: false,                               // move all sample offsets together
-  solidFill: false,                                 // default OFF: show the original individual coats; toggle on for the filled+capped view
-  clipState: createClipState(),
-};
-
-// ---------------------------------------------------------------------------
-//  Shared loaders
-// ---------------------------------------------------------------------------
-const parsers = createMeshParsers(createLoaders());
-
-// ---------------------------------------------------------------------------
-//  Panes
-// ---------------------------------------------------------------------------
-// The scene / camera / slice-helper half of a pane is built by core/pane.js;
-// the WebGL renderer, DOM-wired OrbitControls and ResizeObserver come from
-// app/browser-adapters.js. The anatomy pane gets a camera-tracking headlight
-// (animate moves it); the segmented-coat pane gets solid cross-section caps
-// when sliced.
-const glb = createPane({ id: 'glb', headLight: true, adapters: browserAdapters(glbPane) });
-const stl = createPane({ id: 'stl', capsEnabled: true, adapters: browserAdapters(stlPane) });
-const mounts = { glb: mountPane(glb, glbPane), stl: mountPane(stl, stlPane) };
-const panes = [glb, stl];
-
-// ---------------------------------------------------------------------------
-//  Events
-// ---------------------------------------------------------------------------
-// The core library talks outward only through this emitter; the listeners
-// (wired in init) render each transition into the DOM.
-const emitter = createEmitter();
-
-// The STL pane is the "overlay workspace": every sample is a normalised group
-// under stl.root, so samples stack on top of each other — core/layers.js owns
-// those groups, the loaded layers, the in-flight downloads and the per-sample
-// offset / opacity rules. In overlay layout the eye anatomy is merged in as
-// another group.
-const layers = new LayerController({ pane: stl, view, io: { fetchBuffer, isCached }, parsers, emitter });
+// core/workbench.js owns the two panes, the camera sync, the layer and
+// anatomy controllers and the view state; the WebGL renderer, DOM-wired
+// OrbitControls and ResizeObserver come from app/browser-adapters.js. The
+// core talks outward only through wb.on(...) and the listeners (wired in
+// init) render each transition into the DOM.
+//
+// `?model=<id>` picks a registry model for the reference eye at load;
+// `?anatomy=<url>` still overrides the file outright, for a model that isn't
+// in the registry. Both are read once, here.
+const params = new URLSearchParams(location.search);
+const wb = createWorkbench({
+  adapters: { glb: browserAdapters(glbPane), stl: browserAdapters(stlPane) },
+  io: { fetchBuffer, isCached },
+  modelId: params.get('model'),
+  anatomyUrl: params.get('anatomy'),
+  startTime: performance.now(),
+});
+const mounts = { glb: mountPane(wb.panes.glb, glbPane), stl: mountPane(wb.panes.stl, stlPane) };
 const sampleCtlRefs = new Map();    // sampleId -> { ox, oy, oz } offset slider inputs
 
-// The reference eye on the left pane — core/anatomy.js owns the active model,
-// the loaded scene, its per-structure meshes / styles / presets, the pane-
-// level opacity and the overlay offset. `?model=<id>` picks a registry model
-// at load; `?anatomy=<url>` still overrides the file outright, for a model
-// that isn't in the registry. Both are read once, here.
-const params = new URLSearchParams(location.search);
-const anatomy = new AnatomyController(
-  { panes: { glb, stl }, view, layers, io: { fetchBuffer, isCached }, parsers, emitter },
-  { modelId: params.get('model'), anatomyUrl: params.get('anatomy') },
-);
+// ---------------------------------------------------------------------------
+//  View events — render mode, clips, layout, sync, auto-rotate, status bar
+// ---------------------------------------------------------------------------
+const statCam = $('#stat-cam'), statTris = $('#stat-tris'), statFps = $('#stat-fps');
 
-function setLayout(mode) {
-  view.layout = mode;
-  document.querySelectorAll('#layout-seg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.layout === mode));
-  document.body.classList.toggle('overlay-layout', mode === 'overlay');
-  $('#overlay-ctl').hidden = mode !== 'overlay';
-  $('#layout-desc').textContent = mode === 'overlay' ? 'Everything superimposed & aligned' : 'Anatomy & layers side by side';
-  anatomy.place();
-  // Re-size + re-fit after the pane reflows to its new width (twice, to be safe:
-  // once on the next frame, once after layout has fully settled).
-  const resize = () => {
-    mounts.glb.measure(); mounts.stl.measure();
-    if (layers.groupCount() || anatomy.object) { updateBounds(stl); layers.fitStl(mode === 'overlay' ? 1.7 : 1.45); }
-  };
-  requestAnimationFrame(resize);
-  setTimeout(resize, 90);
-  applyRenderModeAll();
-}
-
-// ---------------------------------------------------------------------------
-//  Camera framing
-// ---------------------------------------------------------------------------
-// The anatomy pane frames on the globe along ANATOMY_VIEW_DIR (see
-// core/anatomy.js for why); the workspace frames on its sample groups.
-function resetPane(pane) {
-  if (pane === stl) layers.fitStl(view.layout === 'overlay' ? 1.7 : 1.45);
-  else if (anatomy.parts.size) fitBox(pane, anatomy.focusBox(), 1.75, ANATOMY_VIEW_DIR);
-  else if (pane.root.children.length && fitToObject(pane, pane.root)) updateBounds(pane);
-}
-function resetAll() { panes.forEach(resetPane); }
-
-// ---------------------------------------------------------------------------
-//  Slicing / clipping
-// ---------------------------------------------------------------------------
-// The clip-plane, slice-quad, render-mode and stencil-cap logic lives in
-// core/clipping.js and takes the live `view` state explicitly; these shims keep
-// the call sites below reading as they always have.
-const updateBounds = (pane) => coreUpdateBounds(pane, view);
-const updateClips = (pane) => coreUpdateClips(pane, view);
-const applyRenderModeToPane = (pane) => coreApplyRenderModeToPane(pane, view);
-const buildCaps = (pane) => coreBuildCaps(pane, view);
-function applyRenderModeAll() { panes.forEach(applyRenderModeToPane); }
-
-function setRenderMode(mode) {
-  view.renderMode = mode;
-  $('#render-mode').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
-  $('#slice-sec').hidden = mode !== 'slices';
-  // Entering Slices with nothing cut shows no slice — enable one for discoverability.
-  if (mode === 'slices' && !view.clipState.x.on && !view.clipState.y.on && !view.clipState.z.on) {
-    view.clipState.x.on = true;
-    const cb = document.querySelector('.slice-toggle input[data-axis="x"]');
-    if (cb) cb.checked = true;
-    panes.forEach(updateClips);
-  }
-  $('#mode-desc').textContent = {
-    surface: 'Shaded surface · solid meshes',
-    wireframe: 'Wireframe · edge view',
-    slices: 'Tri-planar MPR · orthogonal clipping',
-  }[mode];
-  $('#stat-mode').textContent = mode;
-  applyRenderModeAll();
-}
-
-// ---------------------------------------------------------------------------
-//  Sync (mirror orbit orientation only)
-// ---------------------------------------------------------------------------
-const sync = new CameraSync(glb, stl);
-function setSync(on) {
-  btnSync.setAttribute('aria-pressed', String(on));
-  document.body.classList.toggle('synced', on);
-  const label = btnSync.querySelector('.sync-toggle-label');
-  if (label) label.textContent = on ? 'Synced' : 'Sync views';
-  if (on) sync.link(); else sync.unlink();
+function wireViewEvents() {
+  wb.on('rendermode', ({ mode }) => {
+    $('#render-mode').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+    $('#slice-sec').hidden = mode !== 'slices';
+    $('#mode-desc').textContent = {
+      surface: 'Shaded surface · solid meshes',
+      wireframe: 'Wireframe · edge view',
+      slices: 'Tri-planar MPR · orthogonal clipping',
+    }[mode];
+    $('#stat-mode').textContent = mode;
+  });
+  // Only mirrors the axis checkboxes (entering Slices auto-enables X); the
+  // sliders keep writing their own readouts from their input handlers.
+  wb.on('clip', (c) => {
+    document.querySelectorAll('.slice-toggle input').forEach((cb) => { cb.checked = c[cb.dataset.axis].on; });
+  });
+  wb.on('layout', ({ layout }) => {
+    document.querySelectorAll('#layout-seg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.layout === layout));
+    document.body.classList.toggle('overlay-layout', layout === 'overlay');
+    $('#overlay-ctl').hidden = layout !== 'overlay';
+    $('#layout-desc').textContent = layout === 'overlay' ? 'Everything superimposed & aligned' : 'Anatomy & layers side by side';
+    // Re-size + re-fit after the pane reflows to its new width (twice, to be safe:
+    // once on the next frame, once after layout has fully settled).
+    const resize = () => {
+      mounts.glb.measure(); mounts.stl.measure();
+      wb.refitAfterReflow(layout);
+    };
+    requestAnimationFrame(resize);
+    setTimeout(resize, 90);
+  });
+  wb.on('sync', ({ on }) => {
+    btnSync.setAttribute('aria-pressed', String(on));
+    document.body.classList.toggle('synced', on);
+    const label = btnSync.querySelector('.sync-toggle-label');
+    if (label) label.textContent = on ? 'Synced' : 'Sync views';
+  });
+  wb.on('autorotate', ({ on }) => {
+    $('#auto-rotate').checked = on;
+    document.querySelectorAll('.hud-toolbar [data-act="auto"]').forEach((b) => b.setAttribute('aria-pressed', String(on)));
+  });
+  wb.on('stats', ({ az, el, triangles, fps }) => {
+    statCam.innerHTML = `az ${az}°&nbsp;&nbsp;el ${el}°`;
+    statTris.textContent = `${triangles.toLocaleString()} triangles`;
+    statFps.textContent = `${fps} fps`;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +112,7 @@ function setSync(on) {
 const rowRefs = new Map();
 
 function wireLayerEvents() {
-  emitter.on('layer:state', ({ id, state, phase, cached }) => {
+  wb.on('layer:state', ({ id, state, phase, cached }) => {
     const refs = rowRefs.get(id);
     if (!refs) return;
     const label = state === 'loading'
@@ -187,7 +122,7 @@ function wireLayerEvents() {
     setRowState(refs, state, label);
     if (state === 'loading' && phase === 'build') refs.bar.style.width = '100%';
   });
-  emitter.on('layer:progress', ({ id, loaded, total, pct }) => {
+  wb.on('layer:progress', ({ id, loaded, total, pct }) => {
     const refs = rowRefs.get(id);
     if (!refs) return;
     refs.bar.style.width = `${total ? Math.min(pct, 99) : 50}%`;
@@ -195,14 +130,14 @@ function wireLayerEvents() {
       ? `Downloading… ${pct}% (${formatBytes(loaded)} / ${formatBytes(total)})`
       : `Downloading… ${formatBytes(loaded)}`;
   });
-  emitter.on('layer:error', ({ id, label, error }) => {
+  wb.on('layer:error', ({ id, label, error }) => {
     toast(`Couldn't load "${label}". ${error.message}`, 'error');
     const refs = rowRefs.get(id);
     if (refs) refs.checkbox.checked = false;
   });
-  emitter.on('layers:visible', ({ anyVisible }) => stlEmpty.classList.toggle('hidden', anyVisible));
+  wb.on('layers:visible', ({ anyVisible }) => stlEmpty.classList.toggle('hidden', anyVisible));
   // Keep a sample's offset sliders in step with its 3D group.
-  emitter.on('sample:offset', ({ sampleId, axis, value }) => {
+  wb.on('sample:offset', ({ sampleId, axis, value }) => {
     const ref = sampleCtlRefs.get(sampleId);
     if (ref && ref['o' + axis]) { ref['o' + axis].value = Math.round(value * 100); setFill(ref['o' + axis]); }
   });
@@ -219,7 +154,7 @@ const anatomyRowRefs = new Map();   // key -> { row, checkbox, swatch, colorInpu
 function wireAnatomyEvents() {
   // A model switch: the URL mirrors the choice, the menu and the (now empty)
   // tree follow — all before the new model starts downloading.
-  emitter.on('anatomy:model', ({ id, isDefault }) => {
+  wb.on('anatomy:model', ({ id, isDefault }) => {
     const url = new URL(location.href);
     if (isDefault) url.searchParams.delete('model');
     else url.searchParams.set('model', id);
@@ -227,7 +162,7 @@ function wireAnatomyEvents() {
     syncModelMenu();
     buildAnatomyTree();
   });
-  emitter.on('anatomy:status', (s) => {
+  wb.on('anatomy:status', (s) => {
     if (s.state === 'loaded') { glbOverlay.classList.add('hidden'); return; }
     if (s.state === 'loading') {
       const label = s.phase === 'start' ? 'Starting…'
@@ -242,8 +177,8 @@ function wireAnatomyEvents() {
       renderOverlay('idle');
     }
   });
-  emitter.on('anatomy:parts', () => buildAnatomyTree());
-  emitter.on('anatomy:preset', ({ name, preset }) => {
+  wb.on('anatomy:parts', () => buildAnatomyTree());
+  wb.on('anatomy:preset', ({ name, preset }) => {
     syncAnatomyRows();
     document.querySelectorAll('#anatomy-preset .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.preset === name));
     const desc = $('#anatomy-preset-desc');
@@ -253,7 +188,7 @@ function wireAnatomyEvents() {
 
 function syncAnatomyRows() {
   for (const [key, refs] of anatomyRowRefs) {
-    const st = anatomy.stateFor(key);
+    const st = wb.anatomy.stateFor(key);
     refs.checkbox.checked = st.visible;
     refs.opacity.value = String(Math.round(st.opacity * 100));
     setFill(refs.opacity);
@@ -270,15 +205,15 @@ function syncAnatomyRows() {
 async function renderOverlay(state, data = {}) {
   glbOverlay.classList.remove('hidden');
   if (state === 'idle') {
-    const cached = await isCached(anatomy.url());
+    const cached = await isCached(wb.anatomy.url());
     glbOverlay.innerHTML = `
       <div class="overlay-card">
         <span class="ms overlay-icon">visibility</span>
-        <div class="overlay-title">${anatomy.model().label}</div>
-        <div class="overlay-sub">${anatomy.model().blurb}${cached ? ' · cached' : ''}</div>
+        <div class="overlay-title">${wb.anatomy.model().label}</div>
+        <div class="overlay-sub">${wb.anatomy.model().blurb}${cached ? ' · cached' : ''}</div>
         <button class="btn btn-primary" id="overlay-load">Load model</button>
       </div>`;
-    glbOverlay.querySelector('#overlay-load').onclick = () => anatomy.load();
+    glbOverlay.querySelector('#overlay-load').onclick = () => wb.anatomy.load();
   } else if (state === 'loading') {
     glbOverlay.innerHTML = `
       <div class="overlay-card">
@@ -287,7 +222,7 @@ async function renderOverlay(state, data = {}) {
         <div class="overlay-sub">${data.label || ''}</div>
         <button class="btn btn-ghost" id="overlay-cancel">Cancel</button>
       </div>`;
-    glbOverlay.querySelector('#overlay-cancel').onclick = () => anatomy.cancel();
+    glbOverlay.querySelector('#overlay-cancel').onclick = () => wb.anatomy.cancel();
   } else if (state === 'error') {
     glbOverlay.innerHTML = `
       <div class="overlay-card">
@@ -295,7 +230,7 @@ async function renderOverlay(state, data = {}) {
         <div class="overlay-sub">${data.message || ''}</div>
         <button class="btn btn-primary" id="overlay-retry">Try again</button>
       </div>`;
-    glbOverlay.querySelector('#overlay-retry').onclick = () => anatomy.load();
+    glbOverlay.querySelector('#overlay-retry').onclick = () => wb.anatomy.load();
   }
 }
 
@@ -315,20 +250,20 @@ function setRowState(refs, state, status) {
 function buildPresetButtons() {
   const host = $('#anatomy-preset');
   if (!host) return;
-  const presets = anatomy.presets();
+  const presets = wb.anatomy.presets();
   const names = Object.keys(presets);
   host.innerHTML = '';
   host.classList.toggle('seg-2', names.length === 2);
   for (const name of names) {
     const b = document.createElement('button');
-    b.className = 'seg-btn' + (name === anatomy.preset ? ' active' : '');
+    b.className = 'seg-btn' + (name === wb.anatomy.preset ? ' active' : '');
     b.dataset.preset = name;
     b.textContent = presets[name].label;
-    b.addEventListener('click', () => anatomy.setPreset(name));
+    b.addEventListener('click', () => wb.anatomy.setPreset(name));
     host.appendChild(b);
   }
   const desc = $('#anatomy-preset-desc');
-  if (desc) desc.textContent = presets[anatomy.preset]?.desc || '';
+  if (desc) desc.textContent = presets[wb.anatomy.preset]?.desc || '';
 }
 
 // The model menu lists every project surveyed for this pane. The ones with no
@@ -348,7 +283,7 @@ function buildModelMenu() {
       `<span class="model-sub">${m.unavailable || m.blurb}</span>` +
       (m.unavailable ? '' : `<span class="model-lic mono">${m.license}</span>`);
     if (!m.unavailable) {
-      item.addEventListener('click', () => { menu.classList.remove('open'); anatomy.setModel(m.id); });
+      item.addEventListener('click', () => { menu.classList.remove('open'); wb.anatomy.setModel(m.id); });
     }
     menu.appendChild(item);
   }
@@ -356,7 +291,7 @@ function buildModelMenu() {
 }
 
 function syncModelMenu() {
-  const m = anatomy.model();
+  const m = wb.anatomy.model();
   const label = $('#model-label');
   if (label) label.textContent = m.label;
   const src = $('#anatomy-source');
@@ -366,7 +301,7 @@ function syncModelMenu() {
       : `${m.source} · ${m.license}`;
   }
   document.querySelectorAll('#model-menu .model-item').forEach((b) => {
-    b.classList.toggle('active', b.dataset.modelId === anatomy.modelId());
+    b.classList.toggle('active', b.dataset.modelId === wb.anatomy.modelId());
   });
 }
 
@@ -379,10 +314,10 @@ function buildAnatomyTree() {
   anatomyRowRefs.clear();
 
   buildPresetButtons();
-  if (!anatomy.parts.size) { const c = $('#anatomy-count'); if (c) c.textContent = '—'; return; }
+  if (!wb.anatomy.parts.size) { const c = $('#anatomy-count'); if (c) c.textContent = '—'; return; }
 
   let lastGroup = null;
-  for (const s of anatomy.structures()) {
+  for (const s of wb.anatomy.structures()) {
     if (s.group !== lastGroup) {
       const h = document.createElement('div');
       h.className = 'anat-group';
@@ -394,11 +329,11 @@ function buildAnatomyTree() {
   }
   syncAnatomyRows();
   const count = $('#anatomy-count');
-  if (count) count.textContent = anatomy.parts.size;
+  if (count) count.textContent = wb.anatomy.parts.size;
 }
 
 function buildAnatomyRow(s) {
-  const st = anatomy.stateFor(s.key);
+  const st = wb.anatomy.stateFor(s.key);
   const hex = `#${st.color.toString(16).padStart(6, '0')}`;
 
   const row = document.createElement('div');
@@ -432,16 +367,16 @@ function buildAnatomyRow(s) {
 
   checkbox.addEventListener('change', () => {
     row.classList.toggle('is-off', !checkbox.checked);
-    anatomy.setVisible(s.key, checkbox.checked);
+    wb.anatomy.setVisible(s.key, checkbox.checked);
   });
   swatch.addEventListener('click', () => colorInput.click());
   colorInput.addEventListener('input', (e) => {
     swatch.style.background = e.target.value;
-    anatomy.setColor(s.key, parseInt(e.target.value.slice(1), 16));
+    wb.anatomy.setColor(s.key, parseInt(e.target.value.slice(1), 16));
   });
   opacity.addEventListener('input', () => {
     setFill(opacity);
-    anatomy.setOpacity(s.key, Number(opacity.value) / 100);
+    wb.anatomy.setOpacity(s.key, Number(opacity.value) / 100);
   });
 
   anatomyRowRefs.set(s.key, { row, checkbox, swatch, colorInput, opacity });
@@ -479,7 +414,7 @@ function buildLayerTree() {
     body.className = 'sample-body open';
 
     head.addEventListener('click', () => { head.classList.toggle('open'); body.classList.toggle('open'); });
-    vis.addEventListener('change', () => layers.setSampleVisible(sample.id, vis.checked));
+    vis.addEventListener('change', () => wb.layers.setSampleVisible(sample.id, vis.checked));
     gear.addEventListener('click', () => { ctl.hidden = !ctl.hidden; gear.classList.toggle('active', !ctl.hidden); });
 
     for (const st of sample.structures) { body.appendChild(buildRow(st)); count++; }
@@ -508,16 +443,16 @@ function buildSampleControls(sample) {
     <button class="link-btn s-reset">Reset position</button>`;
 
   const op = wrap.querySelector('.s-op'); setFill(op);
-  op.addEventListener('input', () => { setFill(op); layers.setSampleOpacity(sample, Number(op.value) / 100); });
+  op.addEventListener('input', () => { setFill(op); wb.layers.setSampleOpacity(sample, Number(op.value) / 100); });
 
   const refs = {};
   for (const [ax, sel] of [['x', '.s-ox'], ['y', '.s-oy'], ['z', '.s-oz']]) {
     const sl = wrap.querySelector(sel); setFill(sl); refs['o' + ax] = sl;
-    sl.addEventListener('input', () => { setFill(sl); layers.offsetChanged(sample, ax, Number(sl.value) / 100); });
+    sl.addEventListener('input', () => { setFill(sl); wb.layers.offsetChanged(sample, ax, Number(sl.value) / 100); });
   }
   sampleCtlRefs.set(sample.id, refs);
 
-  wrap.querySelector('.s-reset').addEventListener('click', () => layers.resetOffsets(sample));
+  wrap.querySelector('.s-reset').addEventListener('click', () => wb.layers.resetOffsets(sample));
   return wrap;
 }
 
@@ -559,30 +494,30 @@ function buildRow(structure) {
   swatch.addEventListener('click', () => colorInput.click());
   colorInput.addEventListener('input', (e) => {
     swatch.style.background = e.target.value;
-    layers.setColor(structure, parseInt(e.target.value.slice(1), 16));
+    wb.layers.setColor(structure, parseInt(e.target.value.slice(1), 16));
   });
   opacity.addEventListener('input', (e) => {
     setFill(e.target);
-    layers.setOpacity(structure, Number(e.target.value) / 100);
+    wb.layers.setOpacity(structure, Number(e.target.value) / 100);
   });
 
   checkbox.addEventListener('change', async () => {
     if (checkbox.checked) {
-      if (layers.has(structure.id)) { layers.setVisible(structure.id, true); return; }
+      if (wb.layers.has(structure.id)) { wb.layers.setVisible(structure.id, true); return; }
       if (!structure._resolved) {
         setRowState(rowRefs.get(structure.id), 'loading', 'Checking…');
         await resolveStructure(structure);
         annotateSize(structure);
         if (!checkbox.checked) { setRowState(rowRefs.get(structure.id), 'idle', ''); return; }
       }
-      if (layers.isHeavy(structure) && !(await isCached(structure.path))) {
+      if (wb.layers.isHeavy(structure) && !(await isCached(structure.path))) {
         const ok = await askConfirm({ title: 'Large layer', message: `“${structure.label}” is ${formatBytes(structure.bytes)}. It will download once and then be cached. Continue?`, confirmLabel: 'Download' });
         if (!ok) { checkbox.checked = false; return; }
       }
-      layers.load(structure);
+      wb.layers.load(structure);
     } else {
-      layers.abort(structure.id);
-      layers.setVisible(structure.id, false);
+      wb.layers.abort(structure.id);
+      wb.layers.setVisible(structure.id, false);
     }
   });
   return row;
@@ -599,10 +534,10 @@ function annotateSize(structure) {
 //  Study selector (top bar) — pick & frame a sample
 // ---------------------------------------------------------------------------
 function focusSample(sampleId) {
-  const sample = layers.findSample(sampleId);
+  const sample = wb.layers.findSample(sampleId);
   if (sample) $('#study-label').textContent = `${sample.label.toUpperCase()} · µCT · SEG`;
 
-  layers.focusSample(sampleId);
+  wb.layers.focusSample(sampleId);
   // Reveal the sample in the left rail.
   const el = layerTree.querySelector(`[data-sample-id="${sampleId}"]`);
   el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -692,27 +627,20 @@ function addHUD(pane, paneEl) {
     <button class="icon-btn" data-act="auto" title="Auto-rotate"><span class="ms">autorenew</span></button>
     <button class="icon-btn" data-act="reset" title="Reset view"><span class="ms">restart_alt</span></button>
     <button class="icon-btn" data-act="fit" title="Fit view"><span class="ms">center_focus_strong</span></button>`;
-  bar.querySelector('[data-act="auto"]').onclick = () => setAutoRotate(!view.autoRotate);
-  bar.querySelector('[data-act="reset"]').onclick = () => resetPane(pane);
-  bar.querySelector('[data-act="fit"]').onclick = () => resetPane(pane);
+  bar.querySelector('[data-act="auto"]').onclick = () => wb.setAutoRotate(!wb.state().autoRotate);
+  bar.querySelector('[data-act="reset"]').onclick = () => wb.resetPane(pane.id);
+  bar.querySelector('[data-act="fit"]').onclick = () => wb.resetPane(pane.id);
   frag.appendChild(bar);
   paneEl.appendChild(frag);
-}
-
-function setAutoRotate(on) {
-  view.autoRotate = on;
-  panes.forEach((p) => { p.controls.autoRotate = on; });
-  $('#auto-rotate').checked = on;
-  document.querySelectorAll('.hud-toolbar [data-act="auto"]').forEach((b) => b.setAttribute('aria-pressed', String(on)));
 }
 
 // ---------------------------------------------------------------------------
 //  Controls wiring
 // ---------------------------------------------------------------------------
 function wireControls() {
-  btnSync.addEventListener('click', () => setSync(!sync.enabled));
-  $('#btn-reset').addEventListener('click', resetAll);
-  $('#btn-fit').addEventListener('click', resetAll);
+  btnSync.addEventListener('click', () => wb.setSync(!wb.state().sync));
+  $('#btn-reset').addEventListener('click', () => wb.resetAll());
+  $('#btn-fit').addEventListener('click', () => wb.resetAll());
 
   // Study selector dropdown
   $('#study-selector').addEventListener('click', (e) => {
@@ -741,10 +669,7 @@ function wireControls() {
     op.dispatchEvent(new Event('input', { bubbles: true }));
   });
 
-  $('#solid-fill').addEventListener('change', (e) => {
-    view.solidFill = e.target.checked;
-    layers.reloadFillVariants();
-  });
+  $('#solid-fill').addEventListener('change', (e) => wb.setSolidFill(e.target.checked));
 
   $('#btn-clear-cache').addEventListener('click', async () => {
     const ok = await askConfirm({ title: 'Clear cache', message: 'Remove all locally cached meshes? They will re-download next time.', confirmLabel: 'Clear' });
@@ -754,54 +679,49 @@ function wireControls() {
   // Render mode segmented control
   $('#render-mode').addEventListener('click', (e) => {
     const btn = e.target.closest('.seg-btn');
-    if (btn) setRenderMode(btn.dataset.mode);
+    if (btn) wb.setRenderMode(btn.dataset.mode);
   });
 
   // Layout (split / overlay) + anatomy group controls
-  $('#layout-seg').addEventListener('click', (e) => { const b = e.target.closest('.seg-btn'); if (b) setLayout(b.dataset.layout); });
-  $('#an-vis').addEventListener('change', (e) => anatomy.setObjectVisible(e.target.checked));
+  $('#layout-seg').addEventListener('click', (e) => { const b = e.target.closest('.seg-btn'); if (b) wb.setLayout(b.dataset.layout); });
+  $('#an-vis').addEventListener('change', (e) => wb.anatomy.setObjectVisible(e.target.checked));
   const modelBtn = $('#model-selector'), modelMenu = $('#model-menu');
   modelBtn?.addEventListener('click', (e) => { e.stopPropagation(); modelMenu.classList.toggle('open'); });
   document.addEventListener('click', (e) => {
     if (modelMenu?.classList.contains('open') && !modelMenu.contains(e.target)) modelMenu.classList.remove('open');
   });
   const anOp = $('#an-op'); setFill(anOp);
-  anOp.addEventListener('input', () => { setFill(anOp); anatomy.setPaneOpacity(Number(anOp.value) / 100); });
+  anOp.addEventListener('input', () => { setFill(anOp); wb.anatomy.setPaneOpacity(Number(anOp.value) / 100); });
   for (const [ax, id] of [['x', '#an-ox'], ['y', '#an-oy'], ['z', '#an-oz']]) {
     const sl = $(id); setFill(sl);
-    sl.addEventListener('input', () => { setFill(sl); anatomy.setOffset(ax, Number(sl.value) / 100); });
+    sl.addEventListener('input', () => { setFill(sl); wb.anatomy.setOffset(ax, Number(sl.value) / 100); });
   }
 
   // Slice plane controls
   document.querySelectorAll('.slice-toggle input').forEach((cb) => {
-    cb.addEventListener('change', () => { view.clipState[cb.dataset.axis].on = cb.checked; panes.forEach(updateClips); });
+    cb.addEventListener('change', () => wb.setClipAxis(cb.dataset.axis, cb.checked));
   });
   document.querySelectorAll('.slice-row .slider').forEach((sl) => {
     setFill(sl);
     sl.addEventListener('input', () => {
       setFill(sl);
-      view.clipState[sl.dataset.axis].pos = Number(sl.value) / 100;
       $(`.slice-val[data-axis="${sl.dataset.axis}"]`).textContent = `${sl.value}%`;
-      panes.forEach(updateClips);
+      wb.setClipPos(sl.dataset.axis, Number(sl.value) / 100);
     });
   });
-  $('#slice-flip').addEventListener('change', (e) => { view.clipState.flip = e.target.checked; panes.forEach(updateClips); });
-  $('#slice-show').addEventListener('change', (e) => { view.clipState.showPlanes = e.target.checked; applyRenderModeAll(); });
+  $('#slice-flip').addEventListener('change', (e) => wb.setClipFlip(e.target.checked));
+  $('#slice-show').addEventListener('change', (e) => wb.setShowPlanes(e.target.checked));
 
   // Display controls
   const op = $('#global-opacity'); setFill(op);
   op.addEventListener('input', (e) => {
     setFill(e.target);
-    view.globalOpacity = Number(e.target.value) / 100;
     $('#opacity-val').textContent = `${e.target.value}%`;
-    layers.reapplyAllOpacity();
+    wb.setGlobalOpacity(Number(e.target.value) / 100);
   });
-  $('#auto-rotate').addEventListener('change', (e) => setAutoRotate(e.target.checked));
-  $('#show-grid').addEventListener('change', (e) => panes.forEach((p) => { p.grid.visible = e.target.checked && !p.bounds.isEmpty(); }));
-  $('#link-offsets').addEventListener('change', (e) => {
-    view.linkOffsets = e.target.checked;
-    if (view.linkOffsets) layers.snapOffsetsToFirst();   // snap every sample to the first sample's offset
-  });
+  $('#auto-rotate').addEventListener('change', (e) => wb.setAutoRotate(e.target.checked));
+  $('#show-grid').addEventListener('change', (e) => wb.setGrid(e.target.checked));
+  $('#link-offsets').addEventListener('change', (e) => wb.setLinkOffsets(e.target.checked));
 
   // Mobile left-rail drawer
   $('#rail-left-restore').addEventListener('click', () => document.body.classList.toggle('no-left'));
@@ -833,56 +753,36 @@ function wireDivider() {
 }
 
 // ---------------------------------------------------------------------------
-//  Render loop + status bar
+//  Render loop
 // ---------------------------------------------------------------------------
-let lastStat = 0, frames = 0, fpsT = performance.now(), fps = 0;
-const statCam = $('#stat-cam'), statTris = $('#stat-tris'), statFps = $('#stat-fps');
-
+// The frame body (controls, headlight, render, fps / status stats) is
+// wb.tick; the app only owns the rAF loop and the clock.
 function animate(now) {
   requestAnimationFrame(animate);
-  glb.controls.update();
-  stl.controls.update();
-  if (glb.headLight) {
-    glb.headLight.position.copy(glb.camera.position);
-    glb.headLight.target.position.copy(glb.controls.target);
-    glb.headLight.target.updateMatrixWorld();
-  }
-  glb.render();
-  stl.render();
-
-  frames++;
-  if (now - fpsT >= 500) { fps = Math.round((frames * 1000) / (now - fpsT)); frames = 0; fpsT = now; }
-  if (now - lastStat >= 250) {
-    lastStat = now;
-    const az = Math.round(THREE.MathUtils.radToDeg(stl.controls.getAzimuthalAngle()));
-    const el = Math.round(90 - THREE.MathUtils.radToDeg(stl.controls.getPolarAngle()));
-    statCam.innerHTML = `az ${az}°&nbsp;&nbsp;el ${el}°`;
-    const tris = (glb.renderer.info.render.triangles + stl.renderer.info.render.triangles);
-    statTris.textContent = `${tris.toLocaleString()} triangles`;
-    statFps.textContent = `${fps} fps`;
-  }
+  wb.tick(now);
 }
 
 // ---------------------------------------------------------------------------
 //  Init
 // ---------------------------------------------------------------------------
 async function init() {
-  addHUD(glb, glbPane);
-  addHUD(stl, stlPane);
+  addHUD(wb.panes.glb, glbPane);
+  addHUD(wb.panes.stl, stlPane);
   wireControls();
+  wireViewEvents();
   wireLayerEvents();
   wireAnatomyEvents();
   wireDivider();
-  setRenderMode('surface');
+  wb.setRenderMode('surface');
   buildModelMenu();
   buildAnatomyTree();
   renderOverlay('idle');
-  layers.syncVisibility();
+  wb.layers.syncVisibility();
   requestAnimationFrame(animate);
 
   try {
     await loadCSVData();
-    layers.setSamples(samplesData.samples);
+    wb.layers.setSamples(samplesData.samples);
     buildLayerTree();
     buildStudyMenu();
     probeSizes(annotateSize);
