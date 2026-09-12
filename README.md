@@ -60,7 +60,8 @@ python3 -m http.server 8000
 | `index.html`      | Markup, theming, Three.js import map.                       |
 | `core/`           | The DOM-free library: scenes, cameras, clipping, sync, layer & anatomy loading, view state — events out, adapters in. Entry `core/index.js`. |
 | `app/browser-adapters.js` | The one browser-only seam: WebGL renderer, OrbitControls on the canvas, resize observation. |
-| `viewer.js`       | View + controller: turns DOM input into workbench calls and renders its events. |
+| `app/ui/`         | The view: `chrome.js` (toasts, confirm, HUD, study menu, status-bar mirrors of the view events), `layer-panel.js` and `anatomy-panel.js` (the two rails — DOM in, `wb.*` calls out, events rendered back). |
+| `viewer.js`       | The controller entry: builds the workbench with the browser adapters, reads the URL, wires the top-level controls and runs the frame loop. |
 | `data-loader.js`  | Loads & parses the dataset manifest; resolves optimized assets. |
 | `asset-loader.js` | Streaming downloads with progress, cancellation & caching. |
 | `optimized/`      | Pre-optimized GLBs that ship with the app.                 |
@@ -122,9 +123,10 @@ behind the reported decimation error, and the whole `core/` library run
 headless — pane construction with a stub renderer and the real OrbitControls,
 clipping planes and caps, camera sync, STL/glTF parsing of synthetic meshes,
 the layer and anatomy loading state machines, and every workbench transition —
-plus a static scan proving no core module reaches for a browser global
-(417 tests, Node's built-in runner; `three` is the only devDependency the
-unit tests need — `@playwright/test` serves the browser suite alone).
+plus a static scan proving no core module reaches for a browser global, and
+the `app/ui/` view modules rendered into a small fake DOM over a headless
+workbench (477 tests, Node's built-in runner; `three` is the only devDependency
+the unit tests need — `@playwright/test` serves the browser suite alone).
 `npm run test:e2e` drives the actual application in Chromium and checks that
 WebGL starts, that a toggled layer reaches the GPU, that the asset cache fills,
 and that the controls behave (18 tests). Both run in CI on every push, along

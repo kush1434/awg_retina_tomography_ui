@@ -29,9 +29,10 @@ If something in the documentation is wrong or unclear, that is a bug too.
    ```
 
 4. Add tests for anything you fixed or added. The data, caching and geometry
-   layers are unit-tested in `test/`, the DOM-free `core/` library in
-   `test/core/`; behaviour that only shows up in a browser belongs in
-   `test/e2e/`.
+   layers and the `app/ui/` view modules (over the fake DOM in
+   `test/helpers/fake-dom.js`) are unit-tested in `test/`, the DOM-free
+   `core/` library in `test/core/`; behaviour that only shows up in a browser
+   belongs in `test/e2e/`.
 5. Open a pull request describing what changed and why.
 
 CI runs both suites plus an asset decode on every pull request.
