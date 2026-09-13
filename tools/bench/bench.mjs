@@ -12,6 +12,7 @@
 // ============================================================================
 
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readMesh, readGLB, bounds, surfaceArea } from './lib/mesh.mjs';
@@ -84,10 +85,17 @@ async function inventory({ json }) {
   // The shell is resolved by walking index.html's actual module graph rather
   // than a hard-coded list — a list silently goes stale whenever a module moves,
   // and this figure is published in the paper.
-  const shell = appShellFiles().reduce((n, p) => n + fs.statSync(p).size, 0);
+  const shellFiles = appShellFiles();
+  const shell = shellFiles.reduce((n, p) => n + fs.statSync(p).size, 0);
+  // GitHub Pages (and any sane host) serves text assets gzipped, so the raw sum
+  // overstates what a visitor actually transfers. The .glb assets are Draco-
+  // compressed already and do not shrink further, so only the shell is measured.
+  const shellGz = shellFiles.reduce((n, p) => n + zlib.gzipSync(fs.readFileSync(p), { level: 6 }).length, 0);
   const anatomy = rows.find((r) => r.file.endsWith('eye-anatomy.glb'));
-  console.log(`  First paint    app shell ${fmtBytes(shell)} + default anatomy ${fmtBytes(anatomy?.bytes ?? 0)}`
-    + ` = ${fmtBytes(shell + (anatomy?.bytes ?? 0))}`);
+  const an = anatomy?.bytes ?? 0;
+  console.log(`  First paint    app shell ${fmtBytes(shell)} raw / ${fmtBytes(shellGz)} gzipped`
+    + ` + default anatomy ${fmtBytes(an)}`);
+  console.log(`                 = ${fmtBytes(shell + an)} raw, ${fmtBytes(shellGz + an)} over the wire`);
   console.log(`  Everything     ${fmtBytes(shell + total)} if every layer is toggled on\n`);
 }
 
