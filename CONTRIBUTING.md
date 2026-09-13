@@ -58,6 +58,29 @@ If you regenerate the optimized assets, please include the
 `tools/bench --verify` output for any mesh whose decimation settings changed, so
 the accuracy claims in the README stay honest.
 
+## Support and governance
+
+**Maintainers.** The project is maintained by its authors, listed in
+[`paper.md`](paper.md). Kush Shah is the primary maintainer and reviews
+incoming issues and pull requests.
+
+**Getting help.** Use the [issue tracker](https://github.com/GoJian/awg_retina_tomography_ui/issues)
+for bugs, questions about the data, and feature requests — there is no separate
+support channel, and questions asked in the open help the next person. Expect a
+first response within about two weeks. This is a small research project rather
+than a funded product: quiet periods happen, and an unanswered issue is a
+backlog, not a refusal.
+
+**How decisions get made.** Maintainers decide by consensus on the issue or pull
+request itself, so the reasoning stays with the change. Two commitments shape
+what gets accepted: the viewer keeps its no-build, no-runtime-dependency
+character (anything beyond `three` needs a case made in an issue first), and
+`core/` stays free of the DOM — the scan in `test/core/dom-free.test.js` is the
+binding check, not a style preference.
+
+**Breaking changes.** `core/`'s exported API follows semantic versioning; a
+breaking change needs a major version and a [`CHANGELOG.md`](CHANGELOG.md) entry.
+
 ## Licensing
 
 The viewer's code is MIT. The bundled reference eye models keep their upstream

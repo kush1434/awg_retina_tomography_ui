@@ -20,7 +20,7 @@ affiliations:
     index: 1
   - name: NASA GeneLab Analysis Working Group          # TODO: confirm
     index: 2
-date: 10 September 2026
+date: 12 September 2026
 bibliography: paper.bib
 ---
 
@@ -166,15 +166,14 @@ MIT covers the viewer code only.
 
 # Quality control
 
-The data and caching layers, the geometry code behind the reported error figures
-and the core library are covered by 507 unit tests on Node's test runner. The
-core runs headless under a stub renderer with the real Three.js orbit controls,
-so pane construction, clipping, camera synchronisation and the loading state
-machines are exercised on synthetic STL and uncompressed glTF; the shipped Draco
-assets are decoded only by the browser suite. 18 Playwright tests then drive the
-real application in a real browser, asserting that WebGL initialises and that a
-toggled layer reaches the GPU. Continuous integration runs both, and decodes
-every shipped asset so a corrupt mesh fails the build.
+507 unit tests on Node's runner cover the data and caching layers, the geometry
+code behind the reported error figures, and the core library. The core runs
+headless under a stub renderer with the real orbit controls, so pane
+construction, clipping, synchronisation and the loading state machines are
+exercised on synthetic STL and uncompressed glTF; the shipped Draco assets are
+decoded only by the browser suite. 18 Playwright tests then drive the real
+application in a real browser. Continuous integration runs both and decodes
+every shipped asset, so a corrupt mesh fails the build.
 
 # AI usage disclosure
 
@@ -226,5 +225,9 @@ you would not defend in review. JOSS treats an inaccurate disclosure as an ethic
 We thank the NASA GeneLab Analysis Working Group for access to the ocular µCT
 data, and the authors of `mesh.eye` and the Upatras model for publishing their
 geometry openly.
+
+[AUTHOR: replace this bracket with the truthful funding statement. JOSS asks for
+all sources of financial support and whether the sponsor had any involvement in
+the work. If there was none: "This work received no external funding."]
 
 # References
