@@ -81,14 +81,65 @@ async function inventory({ json }) {
 
   // What a visitor actually pays for on a first visit: the app shell plus the
   // default anatomy model. Segmented layers stream in only when toggled.
-  const shell = ['index.html', 'viewer.js', 'data-loader.js', 'asset-loader.js', 'styles.css']
-    .map((f) => path.join(ROOT, f))
-    .filter((p) => fs.existsSync(p))
-    .reduce((n, p) => n + fs.statSync(p).size, 0);
+  // The shell is resolved by walking index.html's actual module graph rather
+  // than a hard-coded list — a list silently goes stale whenever a module moves,
+  // and this figure is published in the paper.
+  const shell = appShellFiles().reduce((n, p) => n + fs.statSync(p).size, 0);
   const anatomy = rows.find((r) => r.file.endsWith('eye-anatomy.glb'));
   console.log(`  First paint    app shell ${fmtBytes(shell)} + default anatomy ${fmtBytes(anatomy?.bytes ?? 0)}`
     + ` = ${fmtBytes(shell + (anatomy?.bytes ?? 0))}`);
   console.log(`  Everything     ${fmtBytes(shell + total)} if every layer is toggled on\n`);
+}
+
+/**
+ * Every same-origin file the browser fetches before the first frame: index.html,
+ * its stylesheets, and the transitive closure of relative imports from its
+ * module entry points. Bare specifiers (`three`, `three/addons/`) resolve to a
+ * CDN through the import map and are deliberately excluded — they are not served
+ * from this repository.
+ */
+function appShellFiles() {
+  const entry = path.join(ROOT, 'index.html');
+  if (!fs.existsSync(entry)) return [];
+  const html = fs.readFileSync(entry, 'utf8');
+  const seen = new Set([entry]);
+
+  for (const m of html.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]*href=["']([^"']+)["']/g)) {
+    const p = resolveLocal(m[1], ROOT);
+    if (p) seen.add(p);
+  }
+
+  const queue = [];
+  for (const m of html.matchAll(/<script[^>]+type=["']module["'][^>]*src=["']([^"']+)["']/g)) {
+    const p = resolveLocal(m[1], ROOT);
+    if (p) queue.push(p);
+  }
+
+  while (queue.length) {
+    const file = queue.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const src = fs.readFileSync(file, 'utf8');
+    // static `from '...'` plus dynamic `import('...')`
+    const specs = [
+      ...src.matchAll(/(?:^|\n)\s*(?:import|export)[^'"\n]*?from\s*["']([^"']+)["']/g),
+      ...src.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g),
+    ].map((m) => m[1]);
+    for (const spec of specs) {
+      if (!spec.startsWith('.') && !spec.startsWith('/')) continue;   // bare -> CDN
+      const p = resolveLocal(spec, path.dirname(file));
+      if (p) queue.push(p);
+    }
+  }
+  return [...seen];
+}
+
+/** Resolve a relative/absolute URL to a file inside the repo, or null. */
+function resolveLocal(spec, from) {
+  const clean = spec.split('?')[0].split('#')[0];
+  if (/^https?:/.test(clean)) return null;
+  const p = clean.startsWith('/') ? path.join(ROOT, clean) : path.resolve(from, clean);
+  return fs.existsSync(p) && fs.statSync(p).isFile() ? p : null;
 }
 
 /** Percentile of a sorted Float64Array. */

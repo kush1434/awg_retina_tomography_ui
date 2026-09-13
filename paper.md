@@ -39,9 +39,9 @@ its dataset a CSV manifest URL supplied at run time.
 
 Segmented µCT of the eye produces surface meshes far too large to open casually:
 the mouse eye shipped here is a 1.0 GB binary STL of 21.1 million triangles.
-Inspecting it conventionally means a desktop install, the full download, and a
-machine able to hold it in memory — reasonable for an investigator who works
-with the data daily, prohibitive for everyone else.
+The conventional route costs a desktop install, the full download and a machine
+able to hold it — reasonable for an investigator who works with the data daily,
+prohibitive for everyone else.
 
 This matters for space biology: spaceflight-associated neuro-ocular syndrome is
 among the better-documented risks of long-duration spaceflight [@lee2020sans],
@@ -124,9 +124,12 @@ diagonal on average; the worst-case (Hausdorff) distances, 3.99% and 1.10%, fall
 almost entirely in the original-to-decimated direction — fragments removed, not
 the principal surface displaced.
 
-A first visit fetches about 522 KB from the site — a 179 KB shell plus the
-343 KB default anatomy — against 1.16 GB of source meshes; `three` and the Draco
-decoder come from CDNs on top.
+A first visit fetches about 520 KB from the site — a 177 KB shell, resolved by
+walking `index.html`'s own module graph, plus the 343 KB default anatomy —
+against 1.16 GB of source meshes; `three` and the Draco decoder come from CDNs
+on top. The full-resolution meshes are not in the repository; `tools/bench`
+recomputes every figure above from the copies published in the Hugging Face
+dataset, as `tools/bench/README.md` describes.
 
 # Reference anatomy and provenance
 
