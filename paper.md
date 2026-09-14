@@ -35,10 +35,9 @@ with slice planes. The viewer is a static site opened from a URL, with no instal
 and no local compute, and its dataset is a CSV manifest URL supplied at run time.
 
 ![The two panes under a shared sagittal cut, cameras linked. Left: the `mesh.eye` reference model,
-its ten structures individually toggleable and styled. Right: four of the five segmented µCT coats
-of a murine eye, each a separately streamed mesh. Because the same plane cuts both scenes at the
-same orientation, a segmented coat can be read against the anatomy it corresponds to.
-\label{fig:viewer}](figure.png)
+ten structures each independently styled. Right: four of the five segmented µCT coats of a murine
+eye, each separately streamed. The shared cut is what lets a coat be read against the anatomy it
+corresponds to.\label{fig:viewer}](figure.png)
 
 # Statement of need
 
@@ -129,13 +128,13 @@ describes.
 
 # Reference anatomy and provenance
 
-The left pane holds third-party published anatomy, not NASA data. It ships `feelpp/mesh.eye`
-[@chabannes2024mesheye; @sala2024ovs], the SolidWorks CAD eye it derives from, and the University
-of Patras OpenSim oculomotor model with its six extraocular muscles [@filip2018upat], each with
-one named node per structure and under its own upstream licence. The six surveyed projects that
-ship none stay in the menu, disabled, each with its reason. Because these are human models while
-the segmentation is murine, the interface and the documentation state that the left pane is for
-orientation and not for cross-species morphometry.
+The left pane holds third-party published anatomy, not NASA data: `feelpp/mesh.eye`
+[@chabannes2024mesheye; @sala2024ovs], the SolidWorks CAD eye it derives from, and the Upatras
+OpenSim oculomotor model with its six extraocular muscles [@filip2018upat], each with one named
+node per structure under its own upstream licence. The surveyed projects that ship none stay in
+the menu, disabled, each with its reason. Because these models are human while the segmentation is
+murine, the interface and the documentation state that the left pane is for orientation, not
+cross-species morphometry.
 
 # Research impact statement
 
