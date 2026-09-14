@@ -8,10 +8,13 @@ src_dir must contain:
   mesh.eye/          clone of https://github.com/feelpp/mesh.eye        (GPL-3.0)
   upat_eye_model/    clone of https://gitlab.com/mitkof6/upat_eye_model (CC BY 4.0)
 
-Orientation convention shared by every model: millimetres, globe centred on the
-origin, antero-posterior axis along X with the cornea at -X. The viewer frames
-the pane from the -X side, so all models open on the same three-quarter
-anterior view.
+Orientation convention shared by every model: millimetres, antero-posterior axis
+along X with the cornea at -X, and every structure translated by the bounding-box
+centre of that model's `centre` solid (see JOBS). That is not the same as
+globe-centred for humaneye: its sclera carries a posterior extension, which
+leaves that model's globe ~4.39 mm anterior of mesheye's. The viewer frames the
+pane from the -X side, so all models open on the same three-quarter anterior
+view.
 """
 import json
 import os
@@ -46,8 +49,10 @@ MESHEYE_SOLIDS = {           # Eye.step — MakePartition order in construct-eye
 }
 
 # human_eye.stp — identified by geometry; see the volume/extent table in the
-# build log. tags 7 and 8 are the two retinal vessels, near-identical twins
-# separated only in y; they take the source's own Vein-then-Artery order.
+# build log. Tags 7 and 8 are the two retinal vessels: equal in triangle count,
+# area and volume, and running alongside each other without touching, so the
+# mesh cannot tell them apart. They take the source's own Vein-then-Artery
+# order, which is the only thing the labelling rests on.
 HUMANEYE_SOLIDS = {
     6:  ("cornea",     "Cornea"),
     1:  ("iris",       "Iris & ciliary body"),
@@ -151,8 +156,10 @@ def muscle_tube(points, globe_r, centre, width=3.4, thick=0.85, seg=15):
 
     The .osim stores each muscle as a few path points plus a wrap object; a
     straight polyline between them would cut through the globe. Resample the
-    polyline finely and push anything inside the globe out onto its surface —
-    that is what the solver's `axial` wrap does, and it makes the muscle hug
+    polyline finely and push every point nearer the centre than globe_r + thick
+    out to exactly that radius, so the centreline clears the wrap surface by the
+    full strap thickness and the strap lands on the sclera rather than inside
+    it — that is what the solver's `axial` wrap does, and it makes the muscle hug
     the sclera the way a real rectus does. The cross-section is an ellipse,
     wide tangentially and thin radially, because the recti are broad flat
     straps rather than cords.

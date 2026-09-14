@@ -7,8 +7,8 @@
 # per anatomical structure, packs each model into a glTF with one named node per
 # structure, then Draco-compresses.
 #
-#   mesheye   feelpp/mesh.eye  Eye.step      10 structures  ~352 KB  GPL-3.0
-#   humaneye  feelpp/mesh.eye  human_eye.stp 10 structures  ~360 KB  GPL-3.0
+#   mesheye   feelpp/mesh.eye  Eye.step      10 structures  ~343 KB  GPL-3.0
+#   humaneye  feelpp/mesh.eye  human_eye.stp 10 structures  ~352 KB  GPL-3.0
 #   upat      Upatras OpenSim oculomotor      8 structures  ~30 KB   CC BY 4.0
 #
 # Requires: python3 with `gmsh trimesh numpy networkx` (pip), git, and the
