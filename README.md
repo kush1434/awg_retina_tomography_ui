@@ -23,7 +23,7 @@ data, which is what the segmentation looks like and how its coats sit relative
 to a whole eye.
 
 This viewer answers that question in a browser tab, with nothing installed and a
-first visit of about 400 KB. It is built for three audiences: the GeneLab AWG
+first visit of about 405 KB. It is built for three audiences: the GeneLab AWG
 space-biology researchers who produced the scans and want to check or show them;
 ophthalmology and anatomy teaching, where the segmented coats can be read
 against a published reference eye in the other pane; and reviewers or readers of
@@ -55,7 +55,7 @@ quantifies exactly how much accuracy that costs.
   real progress bar, a cancel control, and recolour / opacity sliders.
 - **Fast by default** — heavy source scans (≈1 GB STL meshes) are decimated and
   Draco-compressed to a few hundred KB each and shipped with the app, so a first
-  visit downloads about 400 KB over the wire — 520 KB raw — instead of over
+  visit downloads about 405 KB over the wire — 534 KB raw — instead of over
   1 GB, rising to 3.2 MB only if every layer is toggled on. The numbers come
   from `tools/bench`; see [Benchmarks](#benchmarks).
 - **Browser caching** — assets are cached via the Cache Storage API, so they
@@ -582,8 +582,8 @@ Measured on the shipped assets:
 | `eye.stl` | 21,141,576 | 1008 MB | 633 KB | 1631x | 0.017% | +0.63% |
 | `feature.stl` | 3,131,220 | 149 MB | 325 KB | 471x | 0.006% | +0.21% |
 
-First paint: a 177 KB app shell (57 KB gzipped) plus the 343 KB default anatomy
-= 520 KB raw, 400 KB over the wire. Toggling on every segmented layer brings the
+First paint: a 190 KB app shell (61 KB gzipped) plus the 343 KB default anatomy
+= 534 KB raw, 405 KB over the wire. Toggling on every segmented layer brings the
 total to 3.2 MB.
 
 Errors are symmetric point-to-surface distances as a fraction of the

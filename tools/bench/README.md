@@ -31,7 +31,7 @@ figure cannot go stale when a module moves — reported both raw and gzipped at
 level 6, plus the default anatomy GLB. The `.glb` assets are Draco-compressed
 already and are not gzipped again because they do not shrink further, so a host
 that serves text assets gzipped transfers the gzipped shell plus the raw GLB.
-This is where the 177 KB raw / 57 KB gzipped shell and the ~400 KB first visit
+This is where the 190 KB raw / 61 KB gzipped shell and the ~405 KB first visit
 reported in the top-level README and in `paper.md` come from. `--json` stops
 after the per-asset rows: it emits `generated` and `assets` only, none of the
 totals.

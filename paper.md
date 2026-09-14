@@ -116,9 +116,11 @@ over both meshes and normalised by the bounding-box diagonal.
 Discarding 98.5% of `eye.stl`'s triangles moves the surface by 0.017% of the diagonal on average.
 The worst-case (Hausdorff) distances, 3.99% and 1.10%, fall almost entirely in the
 original-to-decimated direction, which is consistent with fragments having been removed rather
-than the principal surface displaced. A first visit transfers about 400 KB from the site: a 177 KB
-shell, resolved by walking `index.html`'s own module graph, that the host serves gzipped at 57 KB,
-plus the 343 KB default anatomy, which is already Draco-compressed. That is against 1.16 GB of
+than the principal surface displaced. A first visit transfers about 405 KB from the site: a 190 KB
+shell, resolved by walking `index.html`'s own module graph, that the host serves gzipped at 61 KB,
+plus the 343 KB default anatomy, which is already Draco-compressed. Because there is no build step
+the shell ships its own comments, so documenting the library moved this figure; gzip absorbs most
+of the difference. That is against 1.13 GB of
 source meshes, with `three` and the Draco decoder fetched from CDNs on top. The full-resolution
 meshes are not in the repository; `tools/bench` recomputes every figure above from the copies
 published in the Hugging Face dataset at
@@ -138,13 +140,13 @@ orientation and not for cross-species morphometry.
 # Research impact statement
 
 The viewer is deployed and publicly usable, and the data behind it are open and ungated. The
-segmented meshes, the CSV manifest and the source reconstruction slices are published on Hugging
-Face under MIT, as are the full-resolution meshes the shipped assets were decimated from. A reader
-can therefore fetch the originals and recompute the reduction factors and error bounds reported
-above instead of taking them on trust. `tools/bench` performs exactly that comparison, samples
-both surfaces with a fixed seed so runs are reproducible, and rests on distance code cross-checked
-against brute force in the test suite. Publishing the gigabyte a 633 KB derivative came from is
-what makes its accuracy claim falsifiable.
+segmented meshes, the CSV manifest, the source reconstruction slices and the full-resolution
+meshes the shipped assets were decimated from are all published on Hugging Face under MIT, so a
+reader can fetch the originals and recompute the reduction factors and error bounds above instead
+of taking them on trust. `tools/bench` performs that comparison, samples both surfaces with a
+fixed seed so runs are reproducible, and rests on distance code cross-checked against brute force
+in the test suite. Publishing the gigabyte a 633 KB derivative came from is what makes its
+accuracy claim falsifiable.
 
 `optimized/anatomy/README.md` is a licence-and-geometry audit of nine open eye-modelling projects.
 It reports per-structure triangle counts, volumes and upstream DOIs for the three that distribute
@@ -159,8 +161,8 @@ behind the reported error figures, and the core library. The core runs headless 
 renderer with the real orbit controls, so pane construction, clipping, synchronisation and the
 loading state machines are exercised on synthetic STL and uncompressed glTF. The shipped Draco
 assets are decoded only by the browser suite. 18 Playwright 1.63 tests then drive the real
-application in Chromium. Continuous integration runs both suites on Node 20 and 22 and decodes
-every shipped asset, so a corrupt mesh fails the build.
+application in Chromium. Continuous integration runs the unit suite on Node 20 and 22, the browser
+suite on Node 22, and decodes every shipped asset, so a corrupt mesh fails the build.
 
 # AI usage disclosure
 

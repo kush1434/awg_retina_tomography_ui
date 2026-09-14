@@ -69,12 +69,13 @@ walk the deployed app through this by hand:
 
 The project has no build step, no framework and no npm runtime dependency beyond
 Three.js, and we would like to keep it that way — please raise an issue before
-adding one. The page does load three things from third-party origins, and a
+adding one. The page does load four things from third-party origins, and a
 reviewer watching the network tab should expect them: Three.js itself, through
 the import map in `index.html`; the Draco decoder wasm that Three's
 `DRACOLoader` needs, from gstatic (`dracoDecoderPath` in `core/mesh-parsers.js`
-points it elsewhere if you host your own); and the web fonts, from Google Fonts.
-Each is a plain URL or a documented option, not a package.
+points it elsewhere if you host your own); the web fonts, from Google Fonts; and
+the dataset manifest and its meshes from Hugging Face, unless `?dataset=` points
+somewhere else. Each is a plain URL or a documented option, not a package.
 
 Otherwise, match the surrounding code: ES modules, the existing banner-comment
 convention at the top of each file, and comments that explain *why* rather than
