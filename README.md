@@ -329,6 +329,7 @@ lands on the upstream default branch this becomes
 | Import | What you get |
 |---|---|
 | `awg-retina-tomography-ui` | the core barrel — `createWorkbench`, `createPane`, the clipping / framing / materials helpers ([`core/index.js`](core/index.js)) |
+| `awg-retina-tomography-ui/core/<module>.js` | one core module on its own — `pane.js`, `clipping.js`, `layers.js`, `framing.js`, `materials.js`, … Both this and the extensionless `core/pane` resolve. Reach for it only to sidestep a name clash: the package is `sideEffects: false`, so a bundler already drops whatever you do not import from the barrel |
 | `awg-retina-tomography-ui/browser` | `browserAdapters(el)` and `mountPane(pane, el)` — the WebGL / OrbitControls / ResizeObserver half |
 | `awg-retina-tomography-ui/headless` | `headlessAdapters()` and `stubElement()` — a stub renderer plus the real OrbitControls, for Node. Deliberately not on the barrel, so a browser build never pulls them in |
 | `awg-retina-tomography-ui/asset-loader` | `fetchBuffer` / `isCached` / `clearCache` — streaming downloads with progress, cancellation and Cache Storage |

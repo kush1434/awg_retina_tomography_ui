@@ -140,6 +140,11 @@ describe('package.json packaging', () => {
     assert.equal(pkg.exports['.'], './core/index.js');
     assert.equal(pkg.exports['./headless'], './core/adapters-headless.js');
     assert.equal(pkg.exports['./browser'], './app/browser-adapters.js');
+    // Two patterns, not one: `./core/*` alone substitutes the matched segment
+    // verbatim, so `core/pane.js` would resolve to `core/pane.js.js`. Node
+    // prefers the longer suffix after `*`, so `./core/*.js` wins for the
+    // extensioned form and `./core/*` still catches the extensionless one.
+    assert.equal(pkg.exports['./core/*.js'], './core/*.js');
     assert.equal(pkg.exports['./core/*'], './core/*.js');
     assert.equal(pkg.exports['./data-loader'], './data-loader.js');
     assert.equal(pkg.exports['./asset-loader'], './asset-loader.js');
@@ -178,6 +183,10 @@ describe('package.json packaging', () => {
 
     const paneSub = await import(`${pkg.name}/core/pane`);
     assert.equal(paneSub.createPane, core.createPane);
+    // The form a bundler user writes by hand. It is a separate exports pattern
+    // from the extensionless one above and has to be asserted separately.
+    const paneExt = await import(`${pkg.name}/core/pane.js`);
+    assert.equal(paneExt.createPane, core.createPane);
 
     const browser = await import(`${pkg.name}/browser`);
     assert.equal(typeof browser.browserAdapters, 'function');

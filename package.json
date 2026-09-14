@@ -15,6 +15,7 @@
   },
   "exports": {
     ".": "./core/index.js",
+    "./core/*.js": "./core/*.js",
     "./core/*": "./core/*.js",
     "./headless": "./core/adapters-headless.js",
     "./browser": "./app/browser-adapters.js",
