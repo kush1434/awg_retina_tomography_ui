@@ -14,6 +14,13 @@ import * as THREE from 'three';
  * Place `pane`'s camera on the orbit sphere at azimuth `az` / polar angle
  * `polar` (OrbitControls' theta / phi), keeping its current distance and
  * target, then run the controls so their spherical state matches.
+ * @param {{camera: THREE.Camera, controls: {getDistance(): number,
+ *   target: THREE.Vector3, update(): void}}} pane
+ * @param {number} az azimuth in RADIANS (OrbitControls' theta).
+ * @param {number} polar polar angle in RADIANS from +y; 0 is straight up, but
+ *   OrbitControls clamps an exact 0 on update() — use a small epsilon to test
+ *   the pole (see test/core/orientation.test.js).
+ * @returns {void}
  */
 export function applyOrientation(pane, az, polar) {
   const dist = pane.controls.getDistance();
@@ -29,6 +36,12 @@ export function applyOrientation(pane, az, polar) {
  * `guard.isSyncing` breaks the loop: applyOrientation calls controls.update(),
  * which fires 'change' on `to`, whose listener would otherwise mirror straight
  * back. A throwaway guard is used when none is passed.
+ * @param {object} from source pane; needs controls.getAzimuthalAngle() /
+ *   getPolarAngle().
+ * @param {object} to target pane, as accepted by applyOrientation.
+ * @param {{isSyncing: boolean}} [guard] shared guard: pass the same object for
+ *   both directions, or the loop-break does nothing.
+ * @returns {void}
  */
 export function mirror(from, to, guard = { isSyncing: false }) {
   if (guard.isSyncing) return;
@@ -46,6 +59,10 @@ export function mirror(from, to, guard = { isSyncing: false }) {
 export class CameraSync {
   #enabled = false;
 
+  /**
+   * @param {object} a first pane (as accepted by applyOrientation / mirror).
+   * @param {object} b second pane.
+   */
   constructor(a, b) {
     this.a = a;
     this.b = b;
@@ -54,8 +71,16 @@ export class CameraSync {
     this.bToA = () => mirror(b, a, this);
   }
 
+  /** @returns {boolean} whether the panes are currently linked. */
   get enabled() { return this.#enabled; }
 
+  /**
+   * Calling link() twice adds no duplicate listeners: three.js's
+   * EventDispatcher ignores a listener it already holds, and the two closures
+   * are created once in the constructor, so add/remove pairs match. Each call
+   * does re-mirror `a` onto `b`.
+   * @returns {void}
+   */
   link() {
     this.#enabled = true;
     this.a.controls.addEventListener('change', this.aToB);
@@ -63,6 +88,10 @@ export class CameraSync {
     mirror(this.a, this.b, this);
   }
 
+  /**
+   * Removes both listeners; safe to call when not linked.
+   * @returns {void}
+   */
   unlink() {
     this.#enabled = false;
     this.a.controls.removeEventListener('change', this.aToB);

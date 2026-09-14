@@ -20,8 +20,20 @@
 // and why they cannot be rendered — they are simulation code or data-driven
 // models that ship no 3D anatomical geometry at all.
 
-// The cornea and aqueous are all but colourless in life; tinting them any
-// harder than this fogs the iris behind them to grey.
+/**
+ * @typedef {{label: string, group: string, color: number, opacity: number,
+ *   rough: number, depth: number, coat?: boolean}} StructureStyle
+ *   `group` is the heading the structure is filed under in the UI, `rough` the
+ *   PBR roughness handed to the material, and `coat` / `depth` are as
+ *   described above. `coat` is the only optional field.
+ */
+
+/**
+ * Styling per structure, keyed by glTF node name; exported as
+ * STRUCTURE_STYLES. The cornea and aqueous are all but colourless in life;
+ * tinting them any harder than this fogs the iris behind them to grey.
+ * @type {Object<string, StructureStyle>}
+ */
 const S = {
   sclera:      { label: 'Sclera',                 group: 'Ocular coats',      color: 0xc6c0b2, opacity: 1.00, rough: 0.52, depth: 0, coat: true },
   choroid:     { label: 'Choroid',                group: 'Ocular coats',      color: 0x8e2b3c, opacity: 1.00, rough: 0.58, depth: 1, coat: true },
@@ -39,12 +51,50 @@ const S = {
   globe:       { label: 'Globe (sclera)',         group: 'Globe',             color: 0xc6c0b2, opacity: 1.00, rough: 0.52, depth: 0, coat: true },
   pupil:       { label: 'Cornea / pupil',         group: 'Globe',             color: 0x2b2f36, opacity: 1.00, rough: 0.30, depth: 1 },
 };
-// Anything not in S is an extraocular muscle, given as [key, label].
+
+/**
+ * The shared style of an extraocular muscle — they differ only by label.
+ * @private module-local helper, deliberately not re-exported from
+ *   core/index.js: reachable by deep import, but not supported API.
+ * @param {string} label
+ * @returns {StructureStyle}
+ */
 const muscle = (label) => ({ label, group: 'Extraocular muscles', color: 0xb84540, opacity: 1.00, rough: 0.66, depth: 0 });
+
+/**
+ * Expands a model's structure list into styled records. A plain string is a
+ * key into S; anything not in S is an extraocular muscle, given as
+ * [key, label].
+ * @private module-local helper, deliberately not re-exported from
+ *   core/index.js: reachable by deep import, but not supported API.
+ * @param {Array<string|[string, string]>} keys
+ * @returns {Array<StructureStyle & {key: string}>} a string key absent from S
+ *   spreads nothing and yields a bare `{ key }` — an unstyled row rather than
+ *   an error.
+ */
 const struct = (keys) => keys.map((k) => (Array.isArray(k)
   ? { key: k[0], ...muscle(k[1]) }
   : { key: k, ...S[k] }));
 
+/**
+ * @typedef {{label: string, desc: string, hidden: string[],
+ *   opacity: Object<string, number>}} AnatomyPreset
+ *   `hidden` names the structures the preset switches off; `opacity` overrides
+ *   a structure's own default, keyed by structure key.
+ */
+
+/**
+ * @typedef {{id: string, label: string, blurb: string, url: string,
+ *   source: string, href: string, license: string, focus: string,
+ *   structures: Array<StructureStyle & {key: string}>,
+ *   presets: Object<string, AnatomyPreset>}
+ *   | {id: string, label: string, unavailable: string}} AnatomyModel
+ *   Two shapes: the full record of a model that can be loaded, and the stub of
+ *   a surveyed project, whose `unavailable` string is the reason it ships no
+ *   renderable geometry.
+ */
+
+/** @type {AnatomyModel[]} */
 const ANATOMY_MODELS = [
   {
     id: 'mesheye',
@@ -106,18 +156,40 @@ const ANATOMY_MODELS = [
   { id: 'osb',        label: 'Open Source Brain', unavailable: 'NeuroML single-neuron morphologies, not ocular anatomy' },
 ];
 
+/** @type {string} the model the left pane shows when nothing usable is asked for. */
 const DEFAULT_MODEL_ID = 'mesheye';
+
+/**
+ * @param {string} id
+ * @returns {AnatomyModel|undefined} undefined covers both an unknown id and a
+ *   model flagged `unavailable` — the two are deliberately indistinguishable
+ *   here, which is what makes this the availability test resolveModelId uses.
+ */
 const modelById = (id) => ANATOMY_MODELS.find((m) => m.id === id && !m.unavailable);
 
-// The `?model=` rule: an id that names an available model is honoured; anything
-// else (unknown, unavailable or missing) falls back to the default model.
+/**
+ * The `?model=` rule: an id that names an available model is honoured; anything
+ * else (unknown, unavailable or missing) falls back to the default model.
+ * @param {string} [id]
+ * @returns {string} always the id of a loadable model.
+ */
 const resolveModelId = (id) => (modelById(id) ? id : DEFAULT_MODEL_ID);
 
-// Structure metadata for `key` within `model`, or undefined when the model has
-// no structure by that name.
+/**
+ * Structure metadata for `key` within `model`.
+ * @param {AnatomyModel} model
+ * @param {string} key
+ * @returns {(StructureStyle & {key: string})|undefined} undefined when the
+ *   model has no structure by that name.
+ */
 const structureMeta = (model, key) => model.structures.find((s) => s.key === key);
 
-// A named preset of `model`, or undefined when it has none by that name.
+/**
+ * A named preset of `model`.
+ * @param {AnatomyModel} model
+ * @param {string} name
+ * @returns {AnatomyPreset|undefined} undefined when it has none by that name.
+ */
 const presetOf = (model, name) => model.presets?.[name];
 
 export {

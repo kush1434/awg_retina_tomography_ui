@@ -5,8 +5,9 @@
 //  and DOM-free. Deliberately NOT re-exported: core/adapters-headless.js (the
 //  stub renderer + real OrbitControls used by the unit tests and by headless
 //  consumers) — it is the package's `./headless` subpath so the browser app's
-//  module graph never loads it — and the private helpers `struct`, `muscle`
-//  (anatomy-models) and `stencilMat` (clipping).
+//  module graph never loads it — and the internal helpers `struct`, `muscle`
+//  (anatomy-models) and `stencilMat` (clipping), which stay reachable by deep
+//  import but are not part of the supported surface.
 // ============================================================================
 
 export { createEmitter } from './emitter.js';
