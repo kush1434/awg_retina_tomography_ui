@@ -3,7 +3,7 @@
 //  bench.mjs — measures what the optimization pipeline actually costs and buys.
 //
 //    node bench.mjs                          inventory of the shipped assets
-//    node bench.mjs --json                   the same, machine-readable
+//    node bench.mjs --json                   per-asset rows only, machine-readable
 //    node bench.mjs --verify <src> <opt>     geometric error of a decimation
 //
 //  The inventory runs against the repository as checked out. `--verify` needs

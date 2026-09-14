@@ -57,7 +57,7 @@ jobs:
           node-version: '22'
       - working-directory: tools/bench
         run: npm install
-      # Decodes every shipped GLB — fails the build if an asset is corrupt or
-      # was committed without Draco compression.
+      # Decodes every shipped GLB — fails the build if one cannot be parsed.
+      # Draco presence is reported in the table, not asserted.
       - working-directory: tools/bench
         run: node bench.mjs

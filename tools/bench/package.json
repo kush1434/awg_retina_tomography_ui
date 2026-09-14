@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "description": "Measures the shipped assets and the geometric cost of decimation",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@gltf-transform/core": "^4.0.0",
     "@gltf-transform/extensions": "^4.0.0",
