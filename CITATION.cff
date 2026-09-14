@@ -1,0 +1,29 @@
+# Cite the software. ORCIDs are omitted rather than filled with placeholders —
+# they go in once registered. The JOSS DOI and a `preferred-citation` block for
+# the paper go in on acceptance, alongside `date-released` when v1.0.0 is tagged.
+cff-version: 1.2.0
+message: "If you use this viewer in your research, please cite it as below."
+title: "Retina Tomography Viewer"
+abstract: >-
+  A zero-install browser viewer for segmented ocular micro-computed-tomography.
+  Two linked 3D panes show a reference eye and the segmented tissue layers of a
+  scan, with per-structure visibility, tri-planar slicing with solid caps, and
+  camera synchronisation. The rendering core is a DOM-free ES module library
+  that also runs headless under Node.
+type: software
+authors:
+  - family-names: Shah
+    given-names: Kush
+  - family-names: Gong
+    given-names: Jian
+repository-code: "https://github.com/GoJian/awg_retina_tomography_ui"
+url: "https://gojian.github.io/awg_retina_tomography_ui/"
+license: MIT
+version: 1.0.0
+keywords:
+  - micro-CT
+  - visualization
+  - WebGL
+  - space biology
+  - ophthalmology
+  - open data

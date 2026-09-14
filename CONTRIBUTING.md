@@ -18,13 +18,15 @@ If something in the documentation is wrong or unclear, that is a bug too.
 
 1. Fork the repository and branch from `main`.
 2. Make the change.
-3. Run the tests:
+3. Run the tests. They need Node >= 20 and python3 on your PATH — Playwright
+   serves the app itself with `tools/dev-serve.py` (see `playwright.config.js`),
+   which is why CI installs Python alongside Node:
 
    ```bash
    npm ci                     # three is a devDependency for the headless core tests
    npm test                   # unit tests; Node >= 20 (globs are expanded by the
                               # shell; on Windows use Node 22)
-   npx playwright install chromium
+   npx playwright install chromium   # on Linux add --with-deps (needs sudo), as CI does
    npm run test:e2e           # browser tests
    ```
 
@@ -37,32 +39,81 @@ If something in the documentation is wrong or unclear, that is a bug too.
 
 CI runs both suites plus an asset decode on every pull request.
 
+## Manual smoke test
+
+The suites leave four things uncovered, on purpose — they are what makes the
+browser tests fast and offline. Playwright runs Chromium only; it pins
+`?dataset=` to the checked-in `local/F10/F10_layers.csv`, so the live Hugging
+Face manifest is never fetched; the Draco decoder is a browser-only download, so
+no test decodes a compressed asset; and nothing asserts anything about rendered
+pixels, so a clip cap that comes out hollow or translucent shells drawn in the
+wrong order would leave the suite green.
+
+Before a release, then — and after changing loading, clipping or materials —
+walk the deployed app through this by hand:
+
+1. Open it with no `?dataset=` and confirm the layer tree fills. This is the
+   only exercise of the real manifest fetch and its cold-start 405 retry against
+   Hugging Face's edge; unit tests only cover that retry with a stubbed `fetch`.
+2. Load the default anatomy and confirm geometry appears — the only path that
+   actually decodes a Draco-compressed GLB.
+3. Toggle two segmented layers and confirm both render.
+4. Switch to the **Slices** tab, enable a plane, and confirm the cut surface is
+   capped solid rather than hollow, and that nested translucent shells still
+   read front-to-back.
+5. Repeat 1–4 once in Firefox and once in Safari.
+6. Narrow the window below 620px and confirm the left rail becomes the overlay
+   drawer and both panes stay usable.
+
 ## Style
 
-The project has no build step, no framework and no runtime dependency beyond
+The project has no build step, no framework and no npm runtime dependency beyond
 Three.js, and we would like to keep it that way — please raise an issue before
-adding one. Otherwise, match the surrounding code: ES modules, the existing
-banner-comment convention at the top of each file, and comments that explain
-*why* rather than restate the code.
+adding one. The page does load three things from third-party origins, and a
+reviewer watching the network tab should expect them: Three.js itself, through
+the import map in `index.html`; the Draco decoder wasm that Three's
+`DRACOLoader` needs, from gstatic (`dracoDecoderPath` in `core/mesh-parsers.js`
+points it elsewhere if you host your own); and the web fonts, from Google Fonts.
+Each is a plain URL or a documented option, not a package.
+
+Otherwise, match the surrounding code: ES modules, the existing banner-comment
+convention at the top of each file, and comments that explain *why* rather than
+restate the code.
 
 ## Working with the data
 
 The application reads a CSV manifest, so most data changes need no code. Point
 the viewer at an alternative manifest with `?dataset=<url>`; the columns are
-documented in the [README](README.md#data). The full-resolution source scans
-live in the
+documented in [The manifest format](README.md#the-manifest-format). The
+full-resolution source scans live in the
 [Hugging Face dataset](https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui)
 and are never modified by this repository.
 
-If you regenerate the optimized assets, please include the
-`tools/bench --verify` output for any mesh whose decimation settings changed, so
-the accuracy claims in the README stay honest.
+If you regenerate the optimized assets, please include the `--verify` output for
+any mesh whose decimation settings changed, so the accuracy claims in the README
+stay honest:
+
+```bash
+cd tools/bench && npm install
+node --max-old-space-size=16384 bench.mjs \
+  --verify ../optimize/original/eye.stl ../../optimized/sample_1_seg_mesh/eye.glb \
+  --samples 50000
+```
+
+`tools/bench/node_modules` is git-ignored, hence the `npm install` first, and the
+source scan is not in git either — [`tools/bench/README.md`](tools/bench/README.md)
+has the `curl` lines that fetch it from Hugging Face.
 
 ## Support and governance
 
-**Maintainers.** The project is maintained by its authors, listed in
-[`paper.md`](paper.md). Kush Shah is the primary maintainer and reviews
-incoming issues and pull requests.
+**Maintainers.** Kush Shah ([@kush1434](https://github.com/kush1434)) is the
+primary maintainer and reviews incoming issues and pull requests; Jian Gong
+([@GoJian](https://github.com/GoJian)) owns the canonical repository. Author
+credit for the accompanying paper is a separate list, in [`paper.md`](paper.md).
+
+**Code of conduct.** Participation is governed by the
+[Contributor Covenant](CODE_OF_CONDUCT.md). Report unacceptable behaviour to the
+maintainers through the issue tracker.
 
 **Getting help.** Use the [issue tracker](https://github.com/GoJian/awg_retina_tomography_ui/issues)
 for bugs, questions about the data, and feature requests — there is no separate
@@ -80,6 +131,11 @@ binding check, not a style preference.
 
 **Breaking changes.** `core/`'s exported API follows semantic versioning; a
 breaking change needs a major version and a [`CHANGELOG.md`](CHANGELOG.md) entry.
+Releases are git tags of the form `vMAJOR.MINOR.PATCH`. Because the package is
+not on npm, an install resolves to whatever the branch you name points at that
+day, so pin something: a tag once one has been cut, and until then the commit you
+tested against —
+`npm install github:kush1434/awg_retina_tomography_ui#<commit>`.
 
 ## Licensing
 
