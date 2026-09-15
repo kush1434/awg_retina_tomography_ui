@@ -156,7 +156,10 @@ so the changelog's compare links and that install command both point at
 across a merge. Retargeting them at `GoJian` before its tag exists would leave
 404s and a broken install line, so the order is — push `v1.0.0` to `GoJian`,
 create the release there, then repoint the two link definitions at the foot of
-[`CHANGELOG.md`](CHANGELOG.md) and the install command in the README.
+[`CHANGELOG.md`](CHANGELOG.md), the install command in the README, and the
+`homepage` in [`package.json`](package.json) and `url` in
+[`CITATION.cff`](CITATION.cff) — both currently name the fork's deployment,
+because `GoJian`'s Pages still serves the pre-refactor build.
 
 ## Licensing
 

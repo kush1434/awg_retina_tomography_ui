@@ -65,10 +65,6 @@ opening an issue at
 is public; if a report should not be public, say so in a minimal issue asking
 for a private channel and a maintainer will follow up.
 
-<!-- Maintainers: replace the sentence above with a monitored email address
-     before submission if you would rather not route reports through a public
-     tracker at all. -->
-
 All complaints will be reviewed and investigated promptly and fairly. All
 community leaders are obligated to respect the privacy and security of the
 reporter of any incident.

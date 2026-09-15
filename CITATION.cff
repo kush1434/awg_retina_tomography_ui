@@ -1,6 +1,5 @@
-# Cite the software. ORCIDs are omitted rather than filled with placeholders —
-# they go in once registered. The JOSS DOI and a `preferred-citation` block for
-# the paper go in on acceptance.
+# Cite the software. The JOSS DOI and a `preferred-citation` block for the paper
+# go in on acceptance. The second author's ORCID goes in once supplied.
 cff-version: 1.2.0
 message: "If you use this viewer in your research, please cite it as below."
 title: "Retina Tomography Viewer"
@@ -14,10 +13,11 @@ type: software
 authors:
   - family-names: Shah
     given-names: Kush
+    orcid: "https://orcid.org/0009-0007-3121-2961"
   - family-names: Gong
     given-names: Jian
 repository-code: "https://github.com/GoJian/awg_retina_tomography_ui"
-url: "https://gojian.github.io/awg_retina_tomography_ui/"
+url: "https://kush1434.github.io/awg_retina_tomography_ui/"
 license: MIT
 version: 1.0.0
 date-released: "2026-09-15"
