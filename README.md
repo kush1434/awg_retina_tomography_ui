@@ -317,14 +317,14 @@ It is not on npm. Install it from git, or copy `core/`,
 import them by relative path:
 
 ```bash
-npm install github:kush1434/awg_retina_tomography_ui#core-library three@^0.169.0
+npm install github:kush1434/awg_retina_tomography_ui#v1.0.0 three@^0.169.0
 ```
 
 Pin `three`: it is a peer dependency declared as `^0.169.0`, and a bare `three`
 installs a far newer release that does not satisfy it, so npm warns on install.
-The fork and branch above are where the core library currently lives — once it
-lands on the upstream default branch this becomes
-`npm install github:GoJian/awg_retina_tomography_ui three@^0.169.0`.
+Pinning the tag rather than a branch keeps the install reproducible. The core
+library currently lives on this fork; once it lands on the upstream default
+branch, `github:GoJian/awg_retina_tomography_ui#v1.0.0` works the same way.
 
 | Import | What you get |
 |---|---|

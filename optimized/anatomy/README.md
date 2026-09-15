@@ -113,7 +113,8 @@ cannot confirm it.
 
 *An Open-Source OpenSim Oculomotor Model for Kinematics and Dynamics Simulation*
 — Konstantinos Filip, Dimitar Stanev, Konstantinos Moustakas, University of Patras.
-[arXiv:1807.07332](https://arxiv.org/abs/1807.07332) ·
+[arXiv:1807.07332](https://arxiv.org/abs/1807.07332) · DOI
+[10.48550/arXiv.1807.07332](https://doi.org/10.48550/arXiv.1807.07332) ·
 <https://simtk.org/projects/eye> · source at
 <https://gitlab.com/mitkof6/upat_eye_model>.
 

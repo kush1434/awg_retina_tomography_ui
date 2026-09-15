@@ -27,50 +27,50 @@ bibliography: paper.bib
 # Summary
 
 `Retina Tomography Viewer` is a browser application for exploring segmented ocular
-micro-computed-tomography (µCT) data. It presents two linked 3D views. The left pane holds a
-published, citable reference eye model; the right holds the toggleable segmented tissue layers of
-a scanned specimen. Orbiting one view mirrors onto the other, so a segmented coat can be read
-against the anatomy it matches, and every structure can be hidden, recoloured, faded or clipped
-with slice planes. It is a static site opened from a URL — no installation, no account, no local
-compute — its dataset a CSV manifest URL supplied at run time.
+micro-computed-tomography (µCT) data in two linked 3D views. The left pane holds a published,
+citable reference eye model; the right holds the toggleable segmented tissue layers of a scanned
+specimen. Orbiting one view mirrors onto the other, so a segmented coat can be read against the
+anatomy it matches, and every structure can be hidden, recoloured, faded or clipped with slice
+planes. It is a static site opened from a URL — no installation, no account, no gigabyte download —
+its dataset a CSV manifest URL supplied at run time.
 
 ![The two panes under a shared sagittal cut, cameras linked. Left: the `mesh.eye` reference model,
 ten structures each independently styled. Right: four of the five segmented µCT coats of a murine
-eye, each separately streamed. The shared cut is what lets a coat be read against the anatomy it
-corresponds to.\label{fig:viewer}](figure.png)
+eye, each separately streamed.\label{fig:viewer}](figure.png)
 
 # Statement of need
 
 Segmented µCT of the eye produces surface meshes far too large to open casually. The mouse eye
 shipped here is a 1.0 GB binary STL of 21.1 million triangles, and viewing it conventionally costs
 a desktop install, the full download and a machine able to hold it. That is reasonable for an
-investigator who works with the data daily, and prohibitive for everyone else. This matters for space
-biology: spaceflight-associated neuro-ocular syndrome is among the better-documented risks of
-long-duration spaceflight [@lee2020sans], so ocular tissue recurs in spaceflight and analog
-studies. NASA's Open Science Data Repository publishes these data openly
-[@gebre2025osdr; @berrios2021genelab]. However, publishing a mesh is not the same as making it
-explorable. The repository hands back a file, and the barrier to looking at it is unchanged.
+investigator who works with the data daily, and prohibitive for the researchers, reviewers and
+students who need to look at it once. This matters for space biology: spaceflight-associated
+neuro-ocular syndrome is among the better-documented risks of long-duration spaceflight
+[@lee2020sans], so ocular tissue recurs in spaceflight and analog studies. NASA's Open Science Data
+Repository publishes these data openly [@gebre2025osdr; @berrios2021genelab]. But publishing a mesh
+is not the same as making it explorable: the repository hands back a file, and the barrier to
+looking at it is unchanged.
 
 # State of the field
 
 3D Slicer [@fedorov2012slicer] and ITK-SNAP [@yushkevich2006itksnap] do more than this viewer,
 including named segments, per-segment visibility, colour and opacity, and synchronised cameras.
-Both are desktop installs, and Slicer advises "10x more memory than the amount of data that you
-load". In the browser, NiiVue [@niivue; @eckstein2026niivue], Neuroglancer [@neuroglancer] and
-itk-vtk-viewer [@itkvtkviewer] render meshes client-side, and two already bind a dataset at
-run time as this viewer does. itk-vtk-viewer takes mesh URLs as `?fileToLoad=`, and a
+Both are desktop installs, and Slicer's user guide advises "10x more memory than the amount of data
+that you load" [@slicerdocs]. In the browser, NiiVue [@niivue; @eckstein2026niivue], Neuroglancer
+[@neuroglancer] and itk-vtk-viewer [@itkvtkviewer] render meshes client-side, and two already bind
+a dataset at run time as this viewer does. itk-vtk-viewer takes mesh URLs as `?fileToLoad=`, and a
 Neuroglancer scene is a pasteable link. The Open Anatomy Browser [@halle2017oabrowser] is closest,
 being zero-install, manifest-described, named and static. We claim novelty in none of this.
 
-What none supplies is the other half of the comparison. None of the six Open Anatomy atlases is
-ocular, and of six open eye-modelling projects we surveyed (ISETBio, OpenRetina, V-Cornea,
-OpenEyeSim, `pulse2percept` and Open Source Brain) none ships usable 3D geometry. This viewer therefore ships its own, three published eye
-models with per-structure names and provenance, in a second camera-linked pane, so a murine
-segmentation can be read against human anatomy from one link. A multi-toggle layer panel would have been a fair
-contribution to itk-vtk-viewer, whose geometry panel selects one mesh at a time. The second pane
-would not: each of those tools builds exactly one scene — one `vtkProxyManager` in itk-vtk-viewer,
-one `THREE.Scene` in the Open Anatomy Browser — so a second populated scene changes a central
-assumption instead of extending it. Hence a small library over three.js [@threejs], not a fork.
+What none supplies is the other half of the comparison. None of the Open Anatomy atlases is ocular,
+and of six open eye-modelling projects we surveyed (ISETBio, OpenRetina, V-Cornea, OpenEyeSim,
+`pulse2percept` and Open Source Brain) none ships usable 3D geometry. This viewer therefore ships
+its own: three published eye models with per-structure names and provenance, in a second
+camera-linked pane. A multi-toggle layer panel would have been a fair contribution to
+itk-vtk-viewer, whose geometry panel selects one mesh at a time. The second pane would not: each of
+those tools builds exactly one scene — one `vtkProxyManager` in itk-vtk-viewer, one `THREE.Scene`
+in the Open Anatomy Browser — so a second populated scene changes a central assumption instead of
+extending it. Hence a small library over three.js [@threejs], not a fork.
 
 # Software design
 
@@ -103,7 +103,7 @@ browser.
 `tools/bench` measures the cost as a symmetric point-to-surface distance, sampled area-weighted
 over both meshes and normalised by the bounding-box diagonal.
 
-| Source mesh | Triangles | Size | Shipped | Reduction | Mean error | p99 | Area change |
+| Source mesh | Triangles | Size | Shipped | Size reduction | Mean error | p99 | Area change |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `eye.stl` | 21,141,576 | 1008.1 MB | 633 KB | 1631× | 0.017% | 0.062% | +0.63% |
 | `feature.stl` | 3,131,220 | 149.3 MB | 325 KB | 471× | 0.006% | 0.024% | +0.21% |
@@ -111,15 +111,10 @@ over both meshes and normalised by the bounding-box diagonal.
 Discarding 98.5% of `eye.stl`'s triangles moves the surface by 0.017% of the diagonal on average.
 The worst-case (Hausdorff) distances, 3.99% and 1.10%, fall almost entirely in the
 original-to-decimated direction, consistent with fragments having been removed rather than the
-principal surface displaced. A first visit transfers about 405 KB: a 190 KB shell, resolved by
-walking `index.html`'s own module graph and served gzipped at 61 KB, plus the 343 KB
-Draco-compressed anatomy. With no build step the shell ships its own comments, so documenting the
-library moved this figure; gzip absorbed most of it. That is against 1.13 GB of
-source meshes, with `three` and the Draco decoder fetched from CDNs on top. The full-resolution
-meshes are not in the repository; `tools/bench` recomputes every figure above from the copies
-published in the Hugging Face dataset at
-<https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui>, as `tools/bench/README.md`
-describes.
+principal surface displaced. A first visit transfers about 405 KB: a 190 KB shell — resolved by
+walking `index.html`'s own module graph, served gzipped at 61 KB — plus the 343 KB
+Draco-compressed anatomy, against 1.13 GB of source meshes, with `three` and the Draco decoder
+fetched from CDNs on top.
 
 # Reference anatomy and provenance
 
@@ -139,18 +134,19 @@ data.
 
 The viewer is deployed and publicly usable, and the data behind it are open and ungated. The
 segmented meshes, the CSV manifest, the source reconstruction slices and the full-resolution
-meshes the shipped assets were decimated from are all published on Hugging Face under MIT, so a
-reader can fetch the originals and recompute the reduction factors and error bounds above instead
-of taking them on trust. `tools/bench` performs that comparison, samples both surfaces with a
-fixed seed so runs are reproducible, and rests on distance code cross-checked against brute force
-in the test suite. Publishing the gigabyte a 633 KB derivative came from is what makes its
-accuracy claim falsifiable.
+meshes the shipped assets were decimated from are not in the repository but are published under
+MIT at <https://huggingface.co/datasets/kush1434/awg_retina_tomography_ui>, so a reader can
+recompute the reduction factors and error bounds above instead of taking them on trust:
+publishing the gigabyte a 633 KB derivative came from is what makes its accuracy claim
+falsifiable. `tools/bench` samples with a fixed seed so runs are reproducible, and rests on
+distance code cross-checked against brute force in the test suite.
 
-`optimized/anatomy/README.md` is a licence-and-geometry audit of nine open eye-modelling projects.
-It reports per-structure triangle counts, volumes and upstream DOIs for the three that distribute
-usable 3D eye geometry [@chabannes2024mesheye; @sala2024ovs; @filip2018upat], and a recorded check
-for the six that distribute none. That geometry is other groups' published work, carried here
-under its own GPL-3.0 and CC BY 4.0 terms, and MIT covers the viewer code only.
+`optimized/anatomy/README.md` is a licence-and-geometry audit of nine entries from eight open
+eye-modelling projects. It reports per-structure triangle counts, volumes and upstream DOIs for
+the three that distribute usable 3D eye geometry [@chabannes2024mesheye; @sala2024ovs;
+@filip2018upat], and a recorded check for the six that distribute none. That geometry is other
+groups' published work, carried under its own GPL-3.0 and CC BY 4.0 terms; MIT covers the viewer
+code only.
 
 # Quality control
 
@@ -187,7 +183,7 @@ through Claude Code, in September 2026, using Claude Opus 5 (`claude-opus-5`) an
   verified bibliographic entries against Crossref, arXiv and Zenodo records.
 
 - *The original application.* The viewer as it existed before this submission — `viewer.js`,
-  `data-loader.js`, `asset-loader.js`, the optimization pipeline and the anatomy-model build
+  `data-loader.js`, `asset-loader.js`, the optimisation pipeline and the anatomy-model build
   scripts, developed between October 2025 and August 2026 — was also written with AI assistance,
   using Claude through Claude Code. [AUTHOR: confirm this names every tool used in that earlier
   period, and correct it if others were. JOSS requires the tools and models, and where each was
