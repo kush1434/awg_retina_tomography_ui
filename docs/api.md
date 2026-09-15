@@ -115,6 +115,11 @@ them.
 | `isHeavy(structure)` | `true` when the record's `bytes` exceed `HEAVY_BYTES` (400 MB). The rule only — the confirm prompt belongs to the app. |
 | `effectivePath(structure)` | The URL `load` would fetch, honouring Solid fill. |
 
+`HEAVY_BYTES` and `effectivePath` are also exported from the barrel in their
+unbound form, along with the `solidVariant` that `effectivePath` consults — see
+[Layer paths](#geometry-helpers). The exported `effectivePath` takes
+`(structure, view)`; the method above is it with this controller's `view` bound.
+
 **Appearance**
 
 | Method | Contract |
@@ -164,6 +169,11 @@ opacity and the overlay offset.
 | `keyOf(mesh)` | The structure key for a mesh, matching its name or the nearest named ancestor; `null` when nothing matches. |
 | `focusBox()` | The box the pane frames on — the sclera when visible, else the whole model. |
 | `state()` | A frozen `{ modelId, url, preset, opacity, offset, visible, partKeys, loading }`. |
+
+`ANATOMY_VIEW_DIR` (also on the barrel) is the `THREE.Vector3(-0.72, 0.26, 0.64)`
+that both `place()` and `wb.resetPane('glb')` hand to `fitBox`, so the reference
+eye always opens on the same three-quarter anterior view. The models put the
+cornea at −X; a straight lateral view would show only a featureless white globe.
 
 **Loading and placement** — `load()` never rejects.
 
@@ -288,8 +298,8 @@ Plain data, no DOM, no Three: the models the left pane can show.
 
 ## Geometry helpers
 
-These are pure, pane-level functions — the workbench calls them for you; they
-are exported because a consumer driving panes directly needs them.
+These are pure functions, most of them pane-level — the workbench calls them for
+you; they are exported because a consumer driving panes directly needs them.
 
 **Clipping** (`core/clipping.js`)
 
@@ -315,6 +325,15 @@ are exported because a consumer driving panes directly needs them.
 | `fitBox(pane, box, offset, dir)` | Frame a box: sets near / far, the controls target and the camera position, along `dir` when given. No-op for an empty box. |
 | `fitToObject(pane, object, offset)` | `fitBox` over an object's world box; returns `false` and changes nothing when it is empty. |
 | `unionBoxOfGroups(groups, fallbackRoot)` | Union box of the visible, non-empty groups, falling back to everything under `fallbackRoot`. |
+
+**Layer paths** (`core/layers.js`) — module-level, not methods on
+`LayerController`, though the controller binds them.
+
+| Export | Contract |
+|---|---|
+| `HEAVY_BYTES` | `400 * 1024 * 1024` = `419430400` — the byte threshold [`isHeavy`](#wblayers-layercontroller) compares a record's `bytes` against. |
+| `solidVariant(path)` | The locally-shipped solid-fill slab for an F10 ocular coat: any path containing `F10_layers/<name>.glb` — the remote Hugging Face original or a local optimized copy, matched case-insensitively and ignoring any query or fragment — maps to `optimized/F10_layers_solid/<name>.glb`. Anything else returns `null`. Pure. |
+| `effectivePath(structure, view)` | The URL `load` would fetch for that structure: `solidVariant(structure.path)` when `view.solidFill` is on and a variant exists, otherwise `structure.path`. `wb.layers.effectivePath(structure)` is this function with the controller's own `view` already bound — mind the arity if you import the free one. |
 
 **Materials** (`core/materials.js`) — `makeMaterial(colorHex, opacity)` (the
 double-sided standard material every layer uses; transparent below 1),
@@ -349,7 +368,7 @@ it.
 
 **`./data-loader`** — this repository's CSV manifest format (columns in the
 [README](../README.md#the-manifest-format)). `loadCSVData(csvUrl)` fetches and
-parses the manifest into `samplesData` — retrying four times with backoff,
+parses the manifest into `samplesData` — trying up to four times with backoff,
 because Hugging Face's edge answers the first cold request with HTTP 405 — and
 appends the synthetic demo sample unless `?demo=off`. `fileKind(url)` maps an
 extension to `'gltf'` or `'stl'`; `deriveOptimizedURL(url)` maps an STL URL to

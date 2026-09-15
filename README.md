@@ -5,9 +5,12 @@ two linked views side by side — a reference **eye anatomy** model on the left 
 the individually toggleable **segmented tissue layers** on the right — built with
 [Three.js](https://threejs.org/) and a zero-build static front end.
 
-**Try it:** <https://gojian.github.io/awg_retina_tomography_ui/> — nothing to
-install. The hosted build tracks the `main` branch, which does not yet carry the
-`core/` library described below.
+**Try it:** <https://kush1434.github.io/awg_retina_tomography_ui/> — nothing to
+install. That deployment serves the `v1.0.0` build this README documents,
+`core/` library included. The canonical host,
+<https://gojian.github.io/awg_retina_tomography_ui/>, tracks
+`GoJian/awg_retina_tomography_ui`'s `main` and still serves the pre-refactor
+viewer; it will pick up `core/` when the refactor lands there.
 
 ![The viewer in split layout: the mesh.eye reference model on the left and the F10 segmented µCT layers on the right, both cut by a sagittal slice plane, with the anatomy and layer rail on the left and the view controls on the right](figure.png)
 
@@ -22,12 +25,13 @@ software — a steep price for the question most people actually bring to this
 data, which is what the segmentation looks like and how its coats sit relative
 to a whole eye.
 
-This viewer answers that question in a browser tab, with nothing installed and a
-first visit of about 405 KB. It is built for three audiences: the GeneLab AWG
-space-biology researchers who produced the scans and want to check or show them;
-ophthalmology and anatomy teaching, where the segmented coats can be read
-against a published reference eye in the other pane; and reviewers or readers of
-the dataset who want to see what is in it before committing to a download.
+This viewer answers that question in a browser tab, with nothing installed and
+about 405 KB of first-party payload on a first visit. It is built for three
+audiences: the GeneLab AWG space-biology researchers who produced the scans and
+want to check or show them; ophthalmology and anatomy teaching, where the
+segmented coats can be read against a published reference eye in the other pane;
+and reviewers or readers of the dataset who want to see what is in it before
+committing to a download.
 
 It is a viewer, not an analysis tool. The meshes it ships are decimated, so it
 is meant for orientation, teaching and qualitative inspection — **not** as a
@@ -55,9 +59,16 @@ quantifies exactly how much accuracy that costs.
   real progress bar, a cancel control, and recolour / opacity sliders.
 - **Fast by default** — heavy source scans (≈1 GB STL meshes) are decimated and
   Draco-compressed to a few hundred KB each and shipped with the app, so a first
-  visit downloads about 405 KB over the wire — 534 KB raw — instead of over
-  1 GB, rising to 3.2 MB only if every layer is toggled on. The numbers come
-  from `tools/bench`; see [Benchmarks](#benchmarks).
+  visit downloads about 405 KB of first-party payload over the wire — 534 KB
+  raw — instead of over 1 GB, rising to 3.2 MB only if every layer is toggled
+  on. The first-party numbers come from `tools/bench`; see
+  [Benchmarks](#benchmarks). On top of them a cold visit also fetches about
+  670 KB from the third-party hosts listed under
+  [Requirements](#requirements) — Three.js from `esm.sh` (~192 KB gzipped), the
+  Draco decoder from gstatic (~98 KB gzipped) and the webfonts (~379 KB, of
+  which 314 KB is the Material Symbols icon font) — so a genuinely cold first
+  visit is nearer 1.05 MB. Those are not optional: the same table records that
+  without `esm.sh` nothing renders at all.
 - **Browser caching** — assets are cached via the Cache Storage API, so they
   download once and load instantly afterwards.
 - **Responsive** — a draggable divider on desktop; a collapsible drawer and
@@ -136,7 +147,7 @@ or dropping the font links, and embedding the core in your own page with
 ## Troubleshooting
 
 **"Failed to load dataset" and an empty layer tree.** The default manifest lives
-on Hugging Face. The app already retries it four times with backoff — Hugging
+on Hugging Face. The app already tries it up to four times with backoff — Hugging
 Face's edge answers the first cold request with HTTP 405 — so a reload is worth
 trying first. If it persists you are offline, behind a proxy that blocks
 `huggingface.co`, or hitting an outage: run against the bundled sample instead
@@ -276,7 +287,7 @@ shown for orientation:
 |----|-------|-----------:|---------|
 | `mesheye`  | [feelpp/mesh.eye](https://github.com/feelpp/mesh.eye) — *A 3D geometrical model and meshing procedures for the human eyeball* ([doi:10.5281/zenodo.13829740](https://doi.org/10.5281/zenodo.13829740)) | 10 | GPL-3.0 |
 | `humaneye` | The SolidWorks CAD eye that mesh.eye derives from; adds zonules and retinal vessels | 10 | GPL-3.0 |
-| `upat`     | [Upatras OpenSim oculomotor model](https://simtk.org/projects/eye) ([arXiv:1807.07332](https://arxiv.org/abs/1807.07332)) — globe + six extraocular muscles | 8 | CC BY 4.0 |
+| `upat`     | [Upatras OpenSim oculomotor model](https://simtk.org/projects/eye) ([arXiv:1807.07332](https://arxiv.org/abs/1807.07332)) — globe, cornea/pupil + six extraocular muscles | 8 | CC BY 4.0 |
 
 All three are **human** eyes while the segmented scan is **mouse**; they are
 references for orientation, not for morphometric comparison. The model menu also
@@ -324,7 +335,9 @@ Pin `three`: it is a peer dependency declared as `^0.169.0`, and a bare `three`
 installs a far newer release that does not satisfy it, so npm warns on install.
 Pinning the tag rather than a branch keeps the install reproducible. The core
 library currently lives on this fork; once it lands on the upstream default
-branch, `github:GoJian/awg_retina_tomography_ui#v1.0.0` works the same way.
+branch **and** a `v1.0.0` tag is pushed there too, the same install works as
+`github:GoJian/awg_retina_tomography_ui#v1.0.0`. Merging alone will not do it —
+git does not carry tags across a pull request.
 
 | Import | What you get |
 |---|---|
@@ -380,7 +393,9 @@ const left = document.getElementById('left'), right = document.getElementById('r
 const wb = createWorkbench({
   adapters: { glb: browserAdapters(left), stl: browserAdapters(right) },
   io: { fetchBuffer, isCached },
-  anatomyUrl: '/models/eye-anatomy.glb',   // copy optimized/anatomy/eye-anatomy.glb here (343 KB, Draco)
+  // 343 KB Draco GLB. Copy it from a clone's optimized/anatomy/ — the
+  // installed package ships code only, no meshes.
+  anatomyUrl: '/models/eye-anatomy.glb',
 });
 mountPane(wb.panes.glb, left);
 mountPane(wb.panes.stl, right);
@@ -404,8 +419,13 @@ isCached(url) }`. Nothing is loaded until you ask.
 registry's default is used instead — but the registry's URLs
 (`optimized/anatomy/eye-anatomy.glb` and its siblings) are plain relative paths,
 resolved against *your* page, so either serve an `optimized/anatomy/` directory
-at that path or keep the override. Note that `/models/...` above is
-root-relative: it resolves only when you control the document root.
+at that path or keep the override. Those GLBs are not in the installed package —
+`package.json`'s `files` ships `core/`, the adapters, the two loaders, `README.md`
+and `LICENSE`, and nothing else — so copy them out of a clone, and carry their
+upstream licences with them: the models are GPL-3.0 and CC BY 4.0, not MIT (see
+[`optimized/anatomy/README.md`](optimized/anatomy/README.md)). Note that
+`/models/...` above is root-relative: it resolves only when you control the
+document root.
 
 ### Writing your own adapters
 
@@ -585,6 +605,16 @@ Measured on the shipped assets:
 First paint: a 190 KB app shell (61 KB gzipped) plus the 343 KB default anatomy
 = 534 KB raw, 405 KB over the wire. Toggling on every segmented layer brings the
 total to 3.2 MB.
+
+`tools/bench` walks this repository only, so those figures are first-party
+bytes. A cold visit to the deployed page also pulls roughly 670 KB from the
+third-party hosts in [Requirements](#requirements) — measured with `curl` over
+the exact URLs `index.html` and `core/mesh-parsers.js` request, as the CDNs
+serve them: `esm.sh` 196,723 B gzipped for `three` and the four addon modules,
+gstatic 100,707 B gzipped for the Draco wrapper and wasm, and 387,750 B of
+webfonts, 321,712 B of that the Material Symbols icon font. The webfont total
+moves with which `unicode-range` subsets a given browser decides it needs; the
+other two do not.
 
 Errors are symmetric point-to-surface distances as a fraction of the
 bounding-box diagonal. Tail error is larger than the mean: for `eye.stl` the p99

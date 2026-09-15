@@ -41,13 +41,21 @@ CI runs both suites plus an asset decode on every pull request.
 
 ## Manual smoke test
 
-The suites leave four things uncovered, on purpose — they are what makes the
-browser tests fast and offline. Playwright runs Chromium only; it pins
+The suites leave five things uncovered, on purpose — the first four are what
+makes the browser tests fast and offline. Playwright runs Chromium only; it pins
 `?dataset=` to the checked-in `local/F10/F10_layers.csv`, so the live Hugging
 Face manifest is never fetched; the Draco decoder is a browser-only download, so
 no test decodes a compressed asset; and nothing asserts anything about rendered
 pixels, so a clip cap that comes out hollow or translucent shells drawn in the
 wrong order would leave the suite green.
+
+The fifth is pointer input: no test in either suite ever dispatches a pointer
+event. The headless tests drive the real `OrbitControls` over
+`core/adapters-headless.js`'s `stubElement`, which no events reach, and the
+Playwright tests drive checkboxes, tabs, sliders and URL parameters only. So
+orbit-by-drag, the camera-sync mirroring it feeds, and the draggable divider
+(`wireDivider` in `viewer.js` — `pointerdown` / `pointermove` / `pointerup` with
+`setPointerCapture`) are verified by hand or not at all.
 
 Before a release, then — and after changing loading, clipping or materials —
 walk the deployed app through this by hand:
@@ -61,8 +69,11 @@ walk the deployed app through this by hand:
 4. Switch to the **Slices** tab, enable a plane, and confirm the cut surface is
    capped solid rather than hollow, and that nested translucent shells still
    read front-to-back.
-5. Repeat 1–4 once in Firefox and once in Safari.
-6. Narrow the window below 620px and confirm the left rail becomes the overlay
+5. Drag inside each pane to orbit, turn **Sync views** on, and confirm the other
+   pane mirrors the rotation; then drag the divider and confirm both panes
+   resize and keep rendering. This is the only exercise of pointer input.
+6. Repeat 1–5 once in Firefox and once in Safari.
+7. Narrow the window below 620px and confirm the left rail becomes the overlay
    drawer and both panes stay usable.
 
 ## Style
@@ -132,11 +143,20 @@ binding check, not a style preference.
 
 **Breaking changes.** `core/`'s exported API follows semantic versioning; a
 breaking change needs a major version and a [`CHANGELOG.md`](CHANGELOG.md) entry.
-Releases are git tags of the form `vMAJOR.MINOR.PATCH`. Because the package is
-not on npm, an install resolves to whatever the branch you name points at that
-day, so pin something: a tag once one has been cut, and until then the commit you
-tested against —
-`npm install github:kush1434/awg_retina_tomography_ui#<commit>`.
+Releases are git tags of the form `vMAJOR.MINOR.PATCH`; the current release is
+`v1.0.0`. Because the package is not on npm, an install resolves to whatever the
+branch you name points at that day, so pin a release tag rather than a branch —
+`npm install github:kush1434/awg_retina_tomography_ui#v1.0.0 three@^0.169.0`,
+the same command the [README](README.md#getting-it) gives — or, for work that is
+not in a release yet, the commit you tested against.
+
+**After the refactor lands upstream.** The tag and the release live on the fork,
+so the changelog's compare links and that install command both point at
+`kush1434`. Merging the pull request does not move them: git does not carry tags
+across a merge. Retargeting them at `GoJian` before its tag exists would leave
+404s and a broken install line, so the order is — push `v1.0.0` to `GoJian`,
+create the release there, then repoint the two link definitions at the foot of
+[`CHANGELOG.md`](CHANGELOG.md) and the install command in the README.
 
 ## Licensing
 
