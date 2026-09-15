@@ -82,7 +82,7 @@ The optimized sizes are what `node ../bench/bench.mjs` prints (KB = 1024 bytes).
 
 ¹ Raw glTF from the tessellated source. Together the three models are 725 KB.
 They replaced a single 137 MB texture-dominated artist model that optimized to
-7.2 MB / 2.68 M triangles — one of them alone is **20× smaller and 18× lighter**
+7.2 MB / 2.68 M triangles — one of them alone is **~21× smaller and ~18× lighter**
 (147 k triangles), and all of them are per-structure.
 
 > `original/` and `out/` are git-ignored — download the source meshes from the

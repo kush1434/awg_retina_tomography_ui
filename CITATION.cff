@@ -1,6 +1,6 @@
 # Cite the software. ORCIDs are omitted rather than filled with placeholders —
 # they go in once registered. The JOSS DOI and a `preferred-citation` block for
-# the paper go in on acceptance, alongside `date-released` when v1.0.0 is tagged.
+# the paper go in on acceptance.
 cff-version: 1.2.0
 message: "If you use this viewer in your research, please cite it as below."
 title: "Retina Tomography Viewer"
@@ -20,6 +20,7 @@ repository-code: "https://github.com/GoJian/awg_retina_tomography_ui"
 url: "https://gojian.github.io/awg_retina_tomography_ui/"
 license: MIT
 version: 1.0.0
+date-released: "2026-09-15"
 keywords:
   - micro-CT
   - visualization

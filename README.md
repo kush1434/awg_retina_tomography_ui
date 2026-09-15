@@ -116,6 +116,36 @@ the ES modules and GLBs show up on a plain reload instead of being served stale
 from the browser's HTTP cache; it is the same server the browser tests start. It
 binds `127.0.0.1` and takes an optional port: `npm run serve -- 8000`.
 
+### Dependencies
+
+The app has no build step, so its runtime dependencies are pinned by URL rather
+than installed. **`npm ci` installs nothing the shipped page loads** — the
+deployed site has no install step at all, and everything under package
+management below exists only for development and testing.
+
+Pinned by URL, each in the file that loads it:
+
+| Dependency | Version | Pinned in |
+|---|---|---|
+| Three.js | r169 (`https://esm.sh/three@0.169.0`) | the `index.html` import map — the same version as the `three` peer dependency range |
+| Draco decoder | 1.5.7 (`https://www.gstatic.com/draco/versioned/decoders/1.5.7/`) | the default `dracoDecoderPath` in [`core/mesh-parsers.js`](core/mesh-parsers.js); override it with `createLoaders({ dracoDecoderPath })` |
+| Webfonts | — | three Google Fonts families, linked from `index.html` |
+
+Changing one of these versions means editing the file that pins it, not a
+lockfile. The fourth host in the [Requirements](#requirements) table,
+`huggingface.co`, is absent here because it is not a dependency — it serves the
+default *dataset*, which is swappable with `?dataset=`.
+
+Under package management, with a committed lockfile each. There is no shared
+install: the two tools are separate packages and are installed from their own
+directories.
+
+| Package | Install | Dependencies |
+|---|---|---|
+| `package.json` (root) | `npm ci` at the repo root | `three ^0.169.0` and `@playwright/test ^1.49.0`, both devDependencies — `three` for the headless [core tests](#tests), Playwright for the browser suite. `three` is *also* declared as a peer dependency, for consumers who [import `core/`](#using-the-core-in-your-own-page). |
+| `tools/bench/package.json` | `cd tools/bench && npm install` | `@gltf-transform/core`, `@gltf-transform/extensions`, `draco3dgltf` — see [Benchmarks](#benchmarks) |
+| `tools/optimize/package.json` | `cd tools/optimize && npm install` | `@gltf-transform/core` — see [Regenerating optimized assets](#regenerating-optimized-assets) |
+
 ### Running against the checked-in dataset
 
 `local/` holds a five-layer F10 mouse-eye sample — a CSV manifest and its five
@@ -305,6 +335,11 @@ The optimized GLBs are produced from the source meshes with
 [`gltf-transform`](https://gltf-transform.dev/) (decimation + Draco compression);
 the eye models are rebuilt from their upstream sources with
 [`tools/optimize/anatomy/build-anatomy.sh`](tools/optimize/anatomy/build-anatomy.sh).
+
+```bash
+cd tools/optimize && npm install   # one-time; optimize has its own dependencies
+```
+
 See [`tools/optimize/`](tools/optimize) for the pipeline.
 
 ---
@@ -564,6 +599,9 @@ npx playwright install chromium
 npm run test:e2e               # browser tests — needs python3 on PATH
 ```
 
+Both devDependencies are for the suites only; neither reaches the shipped page.
+See [Dependencies](#dependencies).
+
 `npm test` covers the manifest parser, the optimized-asset resolution, the
 Hugging Face retry, the streaming/caching asset loader, the geometry code
 behind the reported decimation error, and the whole `core/` library run
@@ -587,6 +625,9 @@ shipped asset.
 cd tools/bench && npm install   # one-time; bench has its own dependencies
 node bench.mjs                  # or `npm run bench` from the repo root
 ```
+
+`tools/bench` is its own package with its own lockfile — a root `npm ci` does
+not install it. See [Dependencies](#dependencies).
 
 Reports the size, triangle count and compression of every shipped asset, and
 the first-paint payload. `node --max-old-space-size=16384 bench.mjs --verify
