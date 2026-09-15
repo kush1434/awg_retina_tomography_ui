@@ -8,11 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 Nothing yet.
 
-## 1.0.0 — unreleased
+## [1.0.0] — 2026-09-14
 
 The first release: the viewer as a core library with a thin browser app over it.
-No `v1.0.0` tag exists yet; the headings here gain their bracketed links to the
-release when it is cut.
 
 ### Added
 
@@ -56,3 +54,6 @@ release when it is cut.
 - `tools/optimize/optimize.sh` now documents `@gltf-transform/cli@4.0.0` as the
   CLI version the shipped assets were built with: an unpinned CLI bundles a
   different meshoptimizer and will not reproduce them.
+
+[Unreleased]: https://github.com/kush1434/awg_retina_tomography_ui/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/kush1434/awg_retina_tomography_ui/releases/tag/v1.0.0
